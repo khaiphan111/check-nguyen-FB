@@ -6,3 +6,4 @@ pydantic>=2.6,<3
 instaloader
 psycopg2-binary
 python-dotenv
+python-multipart
