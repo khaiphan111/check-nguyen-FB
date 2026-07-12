@@ -14,13 +14,17 @@ export function clearToken() {
 export async function api<T = any>(path: string, opts: RequestInit = {}): Promise<T> {
   let res: Response;
   try {
+    const headers: any = {
+      Authorization: `Bearer ${getToken()}`,
+      ...(opts.headers || {}),
+    };
+    if (!(opts.body instanceof FormData)) {
+      headers["Content-Type"] = "application/json";
+    }
+
     res = await fetch(path, {
       ...opts,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${getToken()}`,
-        ...(opts.headers || {}),
-      },
+      headers,
     });
   } catch {
     throw new Error("Không kết nối được máy chủ. Hãy chắc chắn ứng dụng đang chạy.");

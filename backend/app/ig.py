@@ -1,0 +1,310 @@
+import json, re, logging, time
+from typing import Optional
+import httpx
+from . import db
+
+log = logging.getLogger(__name__)
+
+def parse_ig_username(raw: str) -> Optional[str]:
+    raw = raw.strip().rstrip("/")
+    m = re.search(r"instagram\.com/([\w.]+)", raw)
+    if m: return m.group(1)
+    if raw.startswith("@"): return raw[1:]
+    if raw.startswith("http"): return None
+    return raw if re.match(r"^[\w.]+$", raw) else None
+
+def parse_ig_post_id(raw: str) -> Optional[str]:
+    raw = raw.strip().rstrip("/")
+    # https://www.instagram.com/p/C1234567890/ or /reel/C1234567890/
+    m = re.search(r"instagram\.com/(?:p|reel|tv)/([^/?]+)", raw)
+    if m: return m.group(1)
+    if re.match(r"^[\w-]+$", raw) and len(raw) > 5: return raw
+    return None
+
+def fmt_num(n) -> str:
+    try: n = int(n)
+    except: return "N/A"
+    if n >= 1_000_000_000: return f"{n/1_000_000_000:.1f}B"
+    if n >= 1_000_000: return f"{n/1_000_000:.1f}M"
+    if n >= 1_000: return f"{n/1_000:.1f}K"
+    return f"{n:,}"
+
+# ─── FETCH IG INFO ──────────────────────────────────────────
+async def fetch_ig_info(username: str) -> dict:
+    method = db.get_setting("ig_method", "public")
+    
+    if method == "rapidapi":
+        return await _fetch_ig_rapidapi(username)
+    elif method == "instaloader":
+        return await _fetch_ig_instaloader(username)
+    else:
+        return await _fetch_ig_public(username)
+
+async def fetch_ig_post_info(post_url: str) -> dict:
+    method = db.get_setting("ig_method", "public")
+    shortcode = parse_ig_post_id(post_url)
+    if not shortcode: raise ValueError("Link bài viết không hợp lệ.")
+    
+    if method == "rapidapi":
+        return await _fetch_ig_post_rapidapi(shortcode)
+    elif method == "instaloader":
+        return await _fetch_ig_post_instaloader(shortcode)
+    else:
+        return await _fetch_ig_post_public(shortcode)
+
+# ─── RAPIDAPI METHOD ─────────────────────────────────────────
+# Giả sử dùng Instagram Scraper API (hoặc tương tự) trên RapidAPI
+async def _fetch_ig_rapidapi(username: str) -> dict:
+    api_key = db.get_setting("ig_rapidapi_key")
+    if not api_key: raise ValueError("Chưa cấu hình RapidAPI Key trong Dashboard.")
+    
+    headers = {
+        "x-rapidapi-key": api_key,
+        "x-rapidapi-host": "instagram-scraper-api2.p.rapidapi.com"
+    }
+    url = f"https://instagram-scraper-api2.p.rapidapi.com/v1/info?username_or_id_or_url={username}"
+    
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(url, headers=headers)
+        if resp.status_code != 200:
+            raise ValueError(f"Lỗi RapidAPI: {resp.status_code} - {resp.text[:100]}")
+        data = resp.json().get("data", {})
+        if not data: raise ValueError("Không tìm thấy người dùng.")
+        
+        return {
+            "uid": data.get("id", ""),
+            "username": data.get("username", username),
+            "full_name": data.get("full_name", ""),
+            "bio": data.get("biography", ""),
+            "verified": data.get("is_verified", False),
+            "private": data.get("is_private", False),
+            "avatar": data.get("profile_pic_url_hd", ""),
+            "followers": data.get("edge_followed_by", {}).get("count", 0) if isinstance(data.get("edge_followed_by"), dict) else data.get("follower_count", 0),
+            "following": data.get("edge_follow", {}).get("count", 0) if isinstance(data.get("edge_follow"), dict) else data.get("following_count", 0),
+            "posts": data.get("edge_owner_to_timeline_media", {}).get("count", 0) if isinstance(data.get("edge_owner_to_timeline_media"), dict) else data.get("media_count", 0),
+        }
+
+async def _fetch_ig_post_rapidapi(shortcode: str) -> dict:
+    api_key = db.get_setting("ig_rapidapi_key")
+    if not api_key: raise ValueError("Chưa cấu hình RapidAPI Key.")
+    
+    headers = {
+        "x-rapidapi-key": api_key,
+        "x-rapidapi-host": "instagram-scraper-api2.p.rapidapi.com"
+    }
+    url = f"https://instagram-scraper-api2.p.rapidapi.com/v1/post_info?code_or_id_or_url={shortcode}"
+    
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(url, headers=headers)
+        if resp.status_code != 200: raise ValueError(f"Lỗi RapidAPI: {resp.status_code}")
+        data = resp.json().get("data", {})
+        if not data: raise ValueError("Không tìm thấy bài viết.")
+        
+        author = data.get("owner", {}).get("username", "")
+        desc = ""
+        try: desc = data.get("edge_media_to_caption", {}).get("edges", [])[0].get("node", {}).get("text", "")
+        except: pass
+        
+        return {
+            "id": shortcode,
+            "username": author,
+            "desc": desc,
+            "cover": data.get("display_url", ""),
+            "url": f"https://www.instagram.com/p/{shortcode}/",
+            "likes": data.get("edge_media_preview_like", {}).get("count", 0) if isinstance(data.get("edge_media_preview_like"), dict) else data.get("like_count", 0),
+            "comments": data.get("edge_media_to_comment", {}).get("count", 0) if isinstance(data.get("edge_media_to_comment"), dict) else data.get("comment_count", 0),
+            "views": data.get("video_view_count", 0),
+        }
+
+# ─── INSTALOADER METHOD ──────────────────────────────────────
+async def _fetch_ig_instaloader(username: str) -> dict:
+    try: import instaloader
+    except ImportError: raise ValueError("Thư viện instaloader chưa được cài đặt. Hãy chạy pip install instaloader")
+    
+    session_str = db.get_setting("ig_session_cookie")
+    L = instaloader.Instaloader(quiet=True)
+    if session_str:
+        if "=" in session_str:
+            from http.cookies import SimpleCookie
+            cookie = SimpleCookie()
+            cookie.load(session_str)
+            for key, morsel in cookie.items():
+                L.context._session.cookies.set(key, morsel.value, domain=".instagram.com")
+        else:
+            L.context._session.cookies.set("sessionid", session_str, domain=".instagram.com")
+    
+    try:
+        profile = instaloader.Profile.from_username(L.context, username)
+        return {
+            "uid": str(profile.userid),
+            "username": profile.username,
+            "full_name": profile.full_name,
+            "bio": profile.biography,
+            "verified": profile.is_verified,
+            "private": profile.is_private,
+            "avatar": profile.profile_pic_url,
+            "followers": profile.followers,
+            "following": profile.followees,
+            "posts": profile.mediacount,
+        }
+    except Exception as e:
+        raise ValueError(f"Lỗi Instaloader: {e}")
+
+async def _fetch_ig_post_instaloader(shortcode: str) -> dict:
+    try: import instaloader
+    except ImportError: raise ValueError("Thư viện instaloader chưa được cài đặt.")
+    
+    session_str = db.get_setting("ig_session_cookie")
+    L = instaloader.Instaloader(quiet=True)
+    if session_str:
+        if "=" in session_str:
+            from http.cookies import SimpleCookie
+            cookie = SimpleCookie()
+            cookie.load(session_str)
+            for key, morsel in cookie.items():
+                L.context._session.cookies.set(key, morsel.value, domain=".instagram.com")
+        else:
+            L.context._session.cookies.set("sessionid", session_str, domain=".instagram.com")
+        
+    try:
+        post = instaloader.Post.from_shortcode(L.context, shortcode)
+        return {
+            "id": shortcode,
+            "username": post.owner_username,
+            "desc": post.caption or "",
+            "cover": post.url,
+            "url": f"https://www.instagram.com/p/{shortcode}/",
+            "likes": post.likes,
+            "comments": post.comments,
+            "views": post.video_view_count if post.is_video else 0,
+        }
+    except Exception as e:
+        raise ValueError(f"Lỗi Instaloader: {e}")
+
+# ─── PUBLIC METHOD (FALLBACK) ────────────────────────────────
+async def _fetch_ig_public(username: str) -> dict:
+    # Public web endpoint thuong bi chan rat nhanh
+    headers = {
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+        "X-IG-App-ID": "936619743392459",
+    }
+    url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
+    
+    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+        resp = await client.get(url)
+        if resp.status_code == 429:
+            raise ValueError("IG Public Web đang bị chặn (429). Hãy đổi sang dùng Instaloader hoặc RapidAPI trong Cấu Hình.")
+        if resp.status_code != 200:
+            raise ValueError(f"Lỗi Public IG: {resp.status_code}")
+        try:
+            data = resp.json().get("data", {}).get("user", {})
+            if not data: raise ValueError("Không có data")
+            return {
+                "uid": data.get("id", ""),
+                "username": data.get("username", username),
+                "full_name": data.get("full_name", ""),
+                "bio": data.get("biography", ""),
+                "verified": data.get("is_verified", False),
+                "private": data.get("is_private", False),
+                "avatar": data.get("profile_pic_url_hd", ""),
+                "followers": data.get("edge_followed_by", {}).get("count", 0),
+                "following": data.get("edge_follow", {}).get("count", 0),
+                "posts": data.get("edge_owner_to_timeline_media", {}).get("count", 0),
+            }
+        except:
+            raise ValueError("Không thể phân tích dữ liệu Instagram lúc này.")
+
+async def _fetch_ig_post_public(shortcode: str) -> dict:
+    url = f"https://www.instagram.com/graphql/query/?query_hash=b3055c01b4b222b8a47dc12b090e4e64&variables=%7B%22shortcode%22%3A%22{shortcode}%22%7D"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    }
+    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
+        resp = await client.get(url)
+        if resp.status_code == 429:
+            raise ValueError("IG Public Web bị chặn (429).")
+        try:
+            data = resp.json().get("data", {}).get("shortcode_media", {})
+            if not data: raise ValueError("Không có data")
+            author = data.get("owner", {}).get("username", "")
+            desc = ""
+            try: desc = data.get("edge_media_to_caption", {}).get("edges", [])[0].get("node", {}).get("text", "")
+            except: pass
+            
+            return {
+                "id": shortcode,
+                "username": author,
+                "desc": desc,
+                "cover": data.get("display_url", ""),
+                "url": f"https://www.instagram.com/p/{shortcode}/",
+                "likes": data.get("edge_media_preview_like", {}).get("count", 0),
+                "comments": data.get("edge_media_to_parent_comment", {}).get("count", 0),
+                "views": data.get("video_view_count", 0),
+            }
+        except:
+            raise ValueError("Không thể lấy dữ liệu bài viết IG. Hãy dùng Instaloader/RapidAPI.")
+
+# ─── CAPTIONS ────────────────────────────────────────────────
+def build_ig_info_caption(info: dict) -> str:
+    verified = "Đã xác minh ✅" if info["verified"] else "Chưa xác minh ❌"
+    privacy  = "🔒 Riêng tư"   if info["private"]  else "🌐 Công khai"
+    lines = [
+        "╔══════════════════════════╗",
+        "  📸  <b>CHECK THÔNG TIN INSTAGRAM</b>",
+        "╚══════════════════════════╝",
+        "",
+        f"👤 Username  : <b>@{info['username']}</b>",
+        f"📛 Tên hiển thị: <b>{info['full_name']}</b>",
+        f"🔑 Xác minh  : {verified}",
+        f"🔐 Trạng thái: {privacy}",
+        "",
+        "━━━━━━ 📊 THỐNG KÊ ━━━━━━",
+        f"👥 Người theo dõi: <b>{fmt_num(info['followers'])}</b>",
+        f"➡️ Đang theo dõi : <b>{fmt_num(info['following'])}</b>",
+        f"🖼️ Bài viết (Posts): <b>{fmt_num(info['posts'])}</b>",
+    ]
+    if info.get("bio"):
+        lines += ["", f"📝 Tiểu sử:\n<i>{info['bio']}</i>"]
+    
+    lines += [
+        "",
+        f"🔗 <a href=\"https://www.instagram.com/{info['username']}/\">➜ Xem trang Instagram</a>",
+        "", "──────────────────────────",
+        "🤖 <i>Instagram Checker V2 by @khaikhai998</i>",
+    ]
+    return "\n".join(lines)
+
+def build_ig_video_caption(v: dict, old: dict = None) -> str:
+    desc = (v["desc"][:100] + "...") if len(v.get("desc","")) > 100 else v.get("desc","Không có mô tả")
+    lines = [
+        "📊 <b>CẬP NHẬT BÀI VIẾT INSTAGRAM</b>",
+        "",
+        f"📸 <b>@{v['username']}</b>",
+        f"📝 {desc}",
+        "",
+        "━━━━ 📈 THỐNG KÊ ━━━━",
+        f"❤️ Lượt thích: <b>{fmt_num(v['likes'])}</b>",
+        f"💬 Bình luận: <b>{fmt_num(v['comments'])}</b>",
+    ]
+    if v.get("views"):
+        lines.append(f"▶️ Lượt xem: <b>{fmt_num(v['views'])}</b>")
+        
+    if old:
+        dl = v["likes"]    - old.get("likes", 0)
+        dc = v["comments"] - old.get("comments", 0)
+        dv = v.get("views", 0) - old.get("views", 0)
+        def d2s(x): return (f"+{x:,}" if x > 0 else f"{x:,}") if x != 0 else "—"
+        lines += [
+            "", "━━━━ 📊 THAY ĐỔI ━━━━",
+            f"❤️ Thích  : <b>{d2s(dl)}</b>",
+            f"💬 Cmt    : <b>{d2s(dc)}</b>",
+        ]
+        if v.get("views"): lines.append(f"▶️ Views  : <b>{d2s(dv)}</b>")
+        
+    now_str = time.strftime("%d/%m/%Y %H:%M:%S", time.localtime())
+    lines += [
+        "", f"⏰ Thời gian: <b>{now_str}</b>",
+        "", f"🔗 <a href=\"{v['url']}\">▶ Xem bài viết ngay</a>",
+        "", "🤖 <i>Instagram Checker V2</i>",
+    ]
+    return "\n".join(lines)

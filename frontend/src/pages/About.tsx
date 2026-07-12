@@ -1,4 +1,4 @@
-// FB Live/Die Checker — Tác giả: @nhanxp | Hỗ trợ: Telegram/Facebook nhanxp
+// FB Live/Die Checker — Tác giả: @nhanxp | Hỗ trợ: Telegram/Facebook 
 import { IconBrandFacebook, IconBrandTelegram, IconUserCircle } from "@tabler/icons-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui";
 
@@ -17,28 +17,28 @@ export default function About() {
           </p>
           <div className="flex items-center gap-2">
             <IconUserCircle size={18} />
-            <span className="font-medium">Tác giả: @nhanxp</span>
+            <span className="font-medium">Tác giả: @khaikhai998</span>
           </div>
           <div className="flex items-center gap-2">
             <IconBrandTelegram size={18} />
             <a
               className="font-medium underline"
-              href="https://t.me/nhanxp"
+              href="https://t.me/khaikhai998"
               target="_blank"
               rel="noreferrer"
             >
-              Telegram: nhanxp
+              Telegram: khaikhai998
             </a>
           </div>
           <div className="flex items-center gap-2">
             <IconBrandFacebook size={18} />
             <a
               className="font-medium underline"
-              href="https://facebook.com/nhanxp"
+              href="https://www.facebook.com/khaitradecoin"
               target="_blank"
               rel="noreferrer"
             >
-              Facebook: nhanxp
+              Facebook: PHAN VĂN KHẢI
             </a>
           </div>
           <p className="text-xs text-muted-foreground pt-2 border-t border-border">

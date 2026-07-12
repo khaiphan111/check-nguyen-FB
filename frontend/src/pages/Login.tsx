@@ -31,7 +31,7 @@ export default function Login({ onLogin }: { onLogin: () => void }) {
             <IconDeviceDesktop size={34} stroke={1.5} />
             <div className="text-center">
               <div className="font-semibold text-lg">FB Live/Die Checker</div>
-              <div className="text-sm text-muted-foreground">Trang quản trị · @nhanxp</div>
+              <div className="text-sm text-muted-foreground">Trang quản trị · @khaikhai998</div>
             </div>
           </div>
           <form onSubmit={submit} className="flex flex-col gap-3">

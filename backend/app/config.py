@@ -4,9 +4,11 @@ import sys
 
 APP_NAME = "FB Live/Die Checker"
 APP_VERSION = "1.0.0"
-AUTHOR = "@nhanxp"
+AUTHOR = "@khaikhai998"
 SUPPORT_TELEGRAM = "nhanxp"
 SUPPORT_FACEBOOK = "nhanxp"
+
+PORT = 8000
 
 DEFAULT_FB_AVATAR_TOKEN = "6628568379|c1e620fa708a1d5696fb991c1bde5662"
 
@@ -30,9 +32,16 @@ STATIC_DIR = os.path.join(resource_dir(), "static")
 
 DEFAULT_SETTINGS = {
     "bot_token": "",
-    "admin_password": "admin",
+    "admin_password": "Khai16022006$",
     "price_1m": "50000",
     "poll_interval": "60",
     "fb_avatar_token": DEFAULT_FB_AVATAR_TOKEN,
+    "fb_cookie": "",
     "setup_done": "0",
+    "enable_free_trial": "1",
+    "free_trial_days": "3",
+    "bank_name": "",
+    "bank_account": "",
+    "bank_owner": "",
+    "admin_zalo_id": "",
 }

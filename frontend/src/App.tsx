@@ -1,4 +1,4 @@
-// FB Live/Die Checker — Tác giả: @nhanxp | Hỗ trợ: Telegram/Facebook nhanxp
+// FB Live/Die Checker — Tác giả: @khaikhai998 | Hỗ trợ: Telegram/Facebook khaikhai998
 import {
   IconActivity,
   IconDeviceDesktop,
@@ -23,11 +23,19 @@ import Logs from "./pages/Logs";
 import Settings from "./pages/Settings";
 import Users from "./pages/Users";
 import Watches from "./pages/Watches";
+import Tiktok from "./pages/Tiktok";
+import Instagram from "./pages/Instagram";
+import Codes from "./pages/Codes";
+import Broadcast from "./pages/Broadcast";
 
 const NAV = [
   { key: "dashboard", label: "Tổng quan", icon: IconActivity },
-  { key: "watches", label: "Theo dõi", icon: IconListCheck },
+  { key: "broadcast", label: "Chiến dịch", icon: IconUsers },
+  { key: "watches", label: "Theo dõi FB", icon: IconListCheck },
+  { key: "tiktok", label: "Tiktok", icon: IconListCheck },
+  { key: "instagram", label: "Instagram", icon: IconListCheck },
   { key: "users", label: "Người dùng", icon: IconUsers },
+  { key: "codes", label: "Kho Code", icon: IconListCheck },
   { key: "logs", label: "Nhật ký", icon: IconHistory },
   { key: "settings", label: "Cấu hình", icon: IconSettings },
   { key: "about", label: "Giới thiệu", icon: IconInfoCircle },
@@ -76,7 +84,7 @@ export default function App() {
           <IconDeviceDesktop size={22} stroke={1.75} />
           <div className="font-semibold leading-tight">
             FB Live/Die
-            <div className="text-xs text-muted-foreground font-normal">@nhanxp</div>
+            <div className="text-xs text-muted-foreground font-normal">@khaikhai998</div>
           </div>
         </div>
         {NAV.map((n) => {
@@ -124,10 +132,14 @@ export default function App() {
         )}
         {tab === "dashboard" && <Dashboard status={status} onRefresh={refreshStatus} />}
         {tab === "watches" && <Watches />}
+        {tab === "tiktok" && <Tiktok />}
+        {tab === "instagram" && <Instagram />}
         {tab === "users" && <Users />}
+        {tab === "codes" && <Codes />}
         {tab === "logs" && <Logs />}
         {tab === "settings" && <Settings onSaved={refreshStatus} />}
         {tab === "about" && <About />}
+        {tab === "broadcast" && <Broadcast />}
       </main>
     </div>
   );

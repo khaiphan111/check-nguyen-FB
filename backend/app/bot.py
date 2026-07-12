@@ -1,53 +1,818 @@
-# FB Live/Die Checker — Tác giả: @nhanxp | Hỗ trợ: Telegram/Facebook nhanxp
 import asyncio
+import logging
 from typing import Optional
 
+import httpx
+import re
 from aiogram import Bot, Dispatcher, Router, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
-    BotCommand,
-    CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    KeyboardButton,
-    Message,
-    ReplyKeyboardMarkup,
-    URLInputFile,
+    BotCommand, Message, URLInputFile, FSInputFile,
+    ReplyKeyboardMarkup, KeyboardButton,
+    InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery,
 )
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
-from . import config, db, fb
+class BankState(StatesGroup):
+    waiting_for_amount = State()
+
+from . import db
 from .util import now, parse_check_args, vnd
-
-router = Router()
-
 DAY = 86400
+from .tiktok import parse_username, fetch_tiktok_info, fmt_num, build_info_caption
+from .ig import (
+    parse_ig_username, parse_ig_post_id,
+    fetch_ig_info, fetch_ig_post_info,
+    build_ig_info_caption, build_ig_video_caption
+)
+from .fb import check_uid, build_fb_caption
+from .poller import poller
+
+log = logging.getLogger(__name__)
+router = Router()
+from aiogram import BaseMiddleware
+from aiogram.types import Message
+
+class SubCheckMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        if isinstance(event, Message) and event.text:
+            cmd = event.text.split()[0].lower()
+            if cmd not in ("/start", "/help", "/balance", "/sub", "/bank", "/ref"):
+                user = db.get_user(event.from_user.id)
+                if not user:
+                    await event.answer("Bạn chưa /start. Gõ /start trước nhé.")
+                    return
+                has_sub = user["sub_until"] and user["sub_until"] > now()
+                has_balance = user["balance"] and user["balance"] > 0
+                if not has_sub and not has_balance:
+                    await event.answer("⚠️ Lỗi: Bạn cần được Admin cấp tiền hoặc cấp gói ngày sử dụng để dùng các chức năng này.\n👉 Gõ /balance để kiểm tra số dư, gõ /sub để mua gói.")
+                    return
+        return await handler(event, data)
+
+router.message.middleware(SubCheckMiddleware())
+
 
 MENU = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="/check"), KeyboardButton(text="/list")],
-        [KeyboardButton(text="/balance"), KeyboardButton(text="/sub")],
-        [KeyboardButton(text="/menu"), KeyboardButton(text="/help")],
+        [KeyboardButton(text="/tiktok"), KeyboardButton(text="/track"), KeyboardButton(text="/untrack")],
+        [KeyboardButton(text="/ig"), KeyboardButton(text="/trackig"), KeyboardButton(text="/untrackig")],
+        [KeyboardButton(text="/check"), KeyboardButton(text="/list"), KeyboardButton(text="/balance"), KeyboardButton(text="/sub")],
+        [KeyboardButton(text="/tracklist"), KeyboardButton(text="/trackiglist"), KeyboardButton(text="/trackfblist")],
+        [KeyboardButton(text="/ref"), KeyboardButton(text="/help")],
     ],
     resize_keyboard=True,
 )
 
 COMMANDS = [
-    BotCommand(command="start", description="Kết nối & xem tài khoản"),
-    BotCommand(command="check", description="Thêm UID theo dõi live/die"),
-    BotCommand(command="list", description="Danh sách UID đang theo dõi"),
-    BotCommand(command="remove", description="Bỏ theo dõi 1 UID"),
-    BotCommand(command="balance", description="Xem số dư"),
-    BotCommand(command="sub", description="Mua / gia hạn gói"),
-    BotCommand(command="menu", description="Hiện menu"),
-    BotCommand(command="help", description="Hướng dẫn"),
+    BotCommand(command="start",     description="Bắt đầu sử dụng bot"),
+    BotCommand(command="bank",      description="Nạp tiền / Lấy thông tin chuyển khoản"),
+    BotCommand(command="tiktok",    description="Check info TikTok: /tiktok <username>"),
+    BotCommand(command="track",     description="Theo dõi follower: /track <username>"),
+    BotCommand(command="untrack",   description="Huỷ theo dõi: /untrack <username>"),
+    BotCommand(command="tracklist", description="Danh sách đang theo dõi"),
+    BotCommand(command="trackv",    description="Theo dõi video: /trackv <link>"),
+    BotCommand(command="untrackv",  description="Huỷ theo dõi video: /untrackv <link>"),
+    BotCommand(command="trackvlist",description="Danh sách video đang theo dõi"),
+    BotCommand(command="ig",        description="Check info Instagram: /ig <username>"),
+    BotCommand(command="trackig",   description="Theo dõi IG: /trackig <username>"),
+    BotCommand(command="untrackig", description="Huỷ theo dõi IG: /untrackig <username>"),
+    BotCommand(command="trackvig",  description="Theo dõi bài viết IG: /trackvig <link>"),
+    BotCommand(command="fb",        description="Check Facebook Live/Die: /fb <uid>"),
+    BotCommand(command="trackfb",   description="Theo dõi FB: /trackfb <uid>"),
+    BotCommand(command="untrackfb", description="Huỷ theo dõi FB: /untrackfb <uid>"),
+    BotCommand(command="ref",       description="Lấy link giới thiệu kiếm tiền"),
+    BotCommand(command="help",      description="Hướng dẫn sử dụng"),
 ]
+
+
+# ─── PROCESS TIKTOK CHECK ─────────────────────────────────────
+async def process_tiktok_check(msg: Message, username: str):
+    wait = await msg.answer(f"⏳ Đang kiểm tra <b>@{username}</b>...")
+    try:
+        info    = await fetch_tiktok_info(username)
+        caption = build_info_caption(info)
+        if info["avatar"]:
+            try:
+                await msg.answer_photo(
+                    photo=URLInputFile(info["avatar"], filename="avatar.jpg"),
+                    caption=caption,
+                )
+                await wait.delete()
+                return
+            except Exception:
+                pass
+        await wait.edit_text(caption, disable_web_page_preview=True)
+    except ValueError as e:
+        await wait.edit_text(f"❌ {e}")
+    except httpx.TimeoutException:
+        await wait.edit_text("⏰ Timeout! Thử lại sau.")
+    except Exception as e:
+        log.exception("Lỗi check @%s", username)
+        await wait.edit_text(f"❌ Lỗi: {e}")
+
+async def process_ig_check(msg: Message, username: str):
+    wait = await msg.answer(f"⏳ Đang kiểm tra IG <b>@{username}</b>...")
+    try:
+        info    = await fetch_ig_info(username)
+        caption = build_ig_info_caption(info)
+        if info.get("avatar"):
+            try:
+                await msg.answer_photo(
+                    photo=URLInputFile(info["avatar"], filename="avatar.jpg"),
+                    caption=caption,
+                )
+                await wait.delete()
+                return
+            except Exception:
+                pass
+        await wait.edit_text(caption, disable_web_page_preview=True)
+    except ValueError as e:
+        await wait.edit_text(f"❌ {e}")
+    except httpx.TimeoutException:
+        await wait.edit_text("⏰ Timeout! Thử lại sau.")
+    except Exception as e:
+        log.exception("Lỗi check IG @%s", username)
+        await wait.edit_text(f"❌ Lỗi: {e}")
+
+async def process_fb_check(msg: Message, uid: str):
+    wait = await msg.answer(f"⏳ Đang kiểm tra FB UID <b>{uid}</b>...")
+    try:
+        res = await check_uid(uid)
+        caption = build_fb_caption(res)
+        if res.get("avatar_url"):
+            try:
+                await msg.answer_photo(
+                    photo=URLInputFile(res["avatar_url"], filename="fb_avatar.jpg"),
+                    caption=caption,
+                )
+                await wait.delete()
+                return
+            except Exception:
+                pass
+        await wait.edit_text(caption, disable_web_page_preview=True)
+    except Exception as e:
+        log.exception("Lỗi check FB %s", uid)
+        await wait.edit_text(f"❌ Lỗi: {e}")
+
+
+# ─── HANDLERS ────────────────────────────────────────────────
+@router.message(CommandStart())
+async def on_start(msg: Message):
+    u = msg.from_user
+    parts = (msg.text or "").split(maxsplit=1)
+    ref_id = 0
+    if len(parts) > 1:
+        try: ref_id = int(parts[1])
+        except: pass
+        
+    user = db.get_user(u.id)
+    if not user:
+        user = db.upsert_user(u.id, u.username or "", u.full_name or "", ref_id)
+        if ref_id > 0 and ref_id != u.id:
+            try:
+                await msg.bot.send_message(ref_id, f"🎉 <b>Tin vui!</b>\nNgười dùng <b>{u.full_name}</b> vừa tham gia Bot qua link giới thiệu của bạn!\nKhi họ nạp tiền bạn sẽ nhận được 10% hoa hồng.", parse_mode="HTML")
+            except: pass
+    else:
+        user = db.upsert_user(u.id, u.username or "", u.full_name or "", 0)
+    db.add_log("system", f"/start {u.id} @{u.username}", u.id)
+    
+    # Auto Trial Logic
+    trial_msg = ""
+    if db.get_setting("enable_free_trial", "1") == "1":
+        try:
+            days = int(db.get_setting("free_trial_days", "3"))
+        except ValueError:
+            days = 3
+        if db.activate_trial(u.id, days):
+            db.add_log("trial", f"Auto trial {days} ngày", u.id)
+            user = db.get_user(u.id) # refresh user data
+            trial_msg = f"🎁 <b>Quà tặng tân thủ:</b> Bạn đã được hệ thống tự động tặng <b>{days} ngày</b> dùng thử miễn phí!\n\n"
+    
+    await msg.answer(
+        f"👋 Xin chào <b>{msg.from_user.full_name}</b>!\n\n"
+        "📱 Bot <b>TikTok/IG/FB Checker V2</b> sẵn sàng!\n\n"
+        f"Số dư: <b>{vnd(user['balance'])}</b>\n"
+        f"Gói FB: <b>{_sub_text(user)}</b>\n\n"
+        f"{trial_msg}"
+        "Gõ /help để xem hướng dẫn đầy đủ.\n"
+        "Gõ /ref để lấy link giới thiệu nhận 10% hoa hồng.",
+        reply_markup=MENU,
+    )
+
+@router.message(Command("ref"))
+async def on_ref(msg: Message):
+    bot_info = await msg.bot.get_me()
+    ref_link = f"https://t.me/{bot_info.username}?start={msg.from_user.id}"
+    user = db.get_user(msg.from_user.id)
+    earnings = user["ref_earnings"] if user else 0
+    
+    ref_count = 0
+    if user:
+        c = db.get_conn().execute("SELECT COUNT(*) FROM tg_users WHERE referrer_id=?", (msg.from_user.id,))
+        ref_count = c.fetchone()[0]
+
+    await msg.answer(
+        f"🎁 <b>HỆ THỐNG GIỚI THIỆU - KIẾM TIỀN</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🔗 <b>Link giới thiệu của bạn:</b>\n"
+        f"👉 <code>{ref_link}</code>\n\n"
+        f"💰 Hoa hồng nhận được: <b>10%</b> mỗi khi người được mời nạp tiền!\n\n"
+        f"📊 <b>Thống kê của bạn:</b>\n"
+        f"• Đã mời: <b>{ref_count} người</b>\n"
+        f"• Hoa hồng đã nhận: <b>{vnd(earnings)}</b>\n\n"
+        f"<i>Hãy copy link trên và gửi cho bạn bè để kiếm tiền ngay nhé!</i>",
+        parse_mode="HTML"
+    )
+
+@router.message(Command("trial"))
+async def on_trial(msg: Message):
+    user = db.get_user(msg.from_user.id)
+    if not user:
+        await msg.answer("Bạn chưa /start. Gõ /start trước nhé.")
+        return
+    
+    if db.get_setting("enable_free_trial", "1") != "1":
+        await msg.answer("❌ Rất tiếc, chương trình dùng thử hiện đang đóng.")
+        return
+        
+    try:
+        days = int(db.get_setting("free_trial_days", "3"))
+    except ValueError:
+        days = 3
+        
+    if db.activate_trial(msg.from_user.id, days):
+        db.add_log("trial", f"User nhận trial {days} ngày", msg.from_user.id)
+        u2 = db.get_user(msg.from_user.id)
+        await msg.answer(
+            f"🎉 <b>Chúc mừng!</b>\n\nBạn đã nhận được <b>{days} ngày</b> dùng thử miễn phí full tính năng!\n"
+            f"Hạn sử dụng mới: <b>{_sub_text(u2)}</b>\n\n"
+            "Hãy trải nghiệm các lệnh theo dõi nhé!"
+        )
+    else:
+        await msg.answer("⚠️ Bạn đã nhận gói dùng thử rồi hoặc gói VIP của bạn đã từng được kích hoạt!")
+
+@router.message(Command("bank"))
+async def on_bank(msg: Message):
+    bank_name = db.get_setting("bank_name", "")
+    bank_account = db.get_setting("bank_account", "")
+    bank_owner = db.get_setting("bank_owner", "")
+    if not bank_name or not bank_account:
+        await msg.answer("⚠️ Admin chưa thiết lập thông tin ngân hàng.")
+        return
+        
+    transfer_content = msg.from_user.username if msg.from_user.username else msg.from_user.id
+    text = (
+        "🏦 <b>THÔNG TIN CHUYỂN KHOẢN</b>\n\n"
+        f"• Ngân hàng: <b>{bank_name}</b>\n"
+        f"• Số tài khoản: <code>{bank_account}</code>\n"
+        f"• Chủ tài khoản: <b>{bank_owner}</b>\n\n"
+        f"📝 <b>Nội dung CK bắt buộc:</b> <code>{transfer_content}</code>\n\n"
+        "<i>Sau khi chuyển khoản thành công, hãy bấm nút bên dưới để xác nhận!</i>"
+    )
+    parts = msg.text.split(maxsplit=1)
+    amount = 0
+    if len(parts) > 1:
+        try:
+            amount = int(parts[1].replace(",", "").replace(".", "").replace("k", "000").replace("K", "000").strip())
+        except: pass
+
+    if amount > 0:
+        cb_data = f"bank_confirm_{amount}"
+        btn_text = f"✅ Tôi đã chuyển {vnd(amount)}"
+    else:
+        cb_data = "bank_confirm"
+        btn_text = "✅ Tôi đã chuyển tiền"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=btn_text, callback_data=cb_data)]])
+    
+    import os
+    img_dir = os.path.join(os.path.dirname(__file__), "..", "data", "images")
+    if os.path.exists(img_dir):
+        for f in os.listdir(img_dir):
+            if f.startswith("qr_"):
+                try:
+                    await msg.answer_photo(photo=FSInputFile(os.path.join(img_dir, f)))
+                except: pass
+                
+    await msg.answer(text, reply_markup=kb)
+
+@router.callback_query(F.data.startswith("use_code_"))
+async def on_use_code(cb: CallbackQuery):
+    code = cb.data.replace("use_code_", "")
+    success, amount = db.use_code(code, cb.from_user.id)
+    if success:
+        db.adjust_balance(cb.from_user.id, amount, f"Sử dụng Giftcode: {code}")
+        try:
+            await cb.message.edit_text(f"✅ <b>NẠP TIỀN THÀNH CÔNG!</b>\n\nBạn đã sử dụng mã <code>{code}</code> và được cộng <b>{vnd(amount)}</b> vào tài khoản.\nCảm ơn bạn đã tin tưởng dịch vụ!")
+        except: pass
+        
+        admin_zalo = db.get_setting("admin_zalo_id", "")
+        if admin_zalo and zalo_manager.running:
+            username_str = f"@{cb.from_user.username}" if cb.from_user.username else cb.from_user.full_name
+            asyncio.create_task(zalo_manager.send_message(admin_zalo, f"💵 Khách {username_str} ({cb.from_user.id}) đã sử dụng thành công mã {code} ({vnd(amount)})"))
+            
+        # Tự động in thêm code khác với giá trị tương ứng
+        db.generate_code(amount)
+        await cb.answer("Nạp tiền thành công!")
+    else:
+        await cb.answer("❌ Mã này không tồn tại hoặc đã được sử dụng!", show_alert=True)
+
+@router.callback_query(F.data.startswith("bank_confirm"))
+async def on_bank_confirm(cb: CallbackQuery, state: FSMContext):
+    await cb.message.edit_reply_markup(reply_markup=None)
+    
+    if cb.data == "bank_confirm":
+        await cb.message.answer("✍️ Vui lòng nhập <b>số tiền</b> bạn đã chuyển khoản (ví dụ: 50000):")
+        await state.set_state(BankState.waiting_for_amount)
+        await cb.answer()
+    else:
+        try:
+            amount = int(cb.data.split("_")[2])
+        except:
+            amount = 0
+            
+        if amount > 0:
+            await process_bank_amount(cb.message, cb.from_user, amount)
+        await cb.answer()
+
+async def process_bank_amount(msg: Message, user, amount: int):
+    admin_zalo = db.get_setting("admin_zalo_id", "")
+    if admin_zalo and zalo_manager.running:
+        username_str = f"@{user.username}" if user.username else user.full_name
+        zmsg = (
+            "🔔 <b>CÓ KHÁCH BÁO CHUYỂN KHOẢN!</b>\n\n"
+            f"👤 Khách: {username_str}\n"
+            f"🆔 ID Telegram: {user.id}\n"
+            f"💰 Số tiền: {vnd(amount)}\n\n"
+            f"👉 ĐỂ TẠO & PHÁT CODE, gửi lệnh:\n/phatcode {user.id} {amount}\n\n"
+            f"👉 Cú pháp cộng thẳng: /topup {user.id} {amount}\n"
+            "👉 Hoặc cộng thủ công trên trang Quản lý."
+        )
+        zalo_kb = {
+            "inline_keyboard": [
+                [{"text": "✅ Đã nhận tiền (Phát Code)", "callback_data": f"zalo_confirm_{user.id}_{amount}"}]
+            ]
+        }
+        asyncio.create_task(zalo_manager.send_message(admin_zalo, zmsg, reply_markup=zalo_kb))
+        await msg.answer(f"✅ Đã gửi thông báo cho Admin xác nhận khoản nạp <b>{vnd(amount)}</b>.\nTiền sẽ được cộng vào tài khoản của bạn sau khi Admin kiểm tra xong (thường trong vòng 1-5 phút)!")
+    else:
+        await msg.answer(f"✅ Đã ghi nhận báo cáo <b>{vnd(amount)}</b>.\nTiền sẽ được cộng vào tài khoản của bạn sau khi Admin kiểm tra xong!")
+
+@router.message(BankState.waiting_for_amount)
+async def on_bank_amount(msg: Message, state: FSMContext):
+    amount_str = msg.text.strip()
+    try:
+        amount = int(amount_str.replace(",", "").replace(".", ""))
+        if amount <= 0: raise ValueError()
+    except:
+        await msg.answer("❌ Số tiền không hợp lệ. Vui lòng nhập lại số tiền (ví dụ: 50000):")
+        return
+        
+    await state.clear()
+    await process_bank_amount(msg, msg.from_user, amount)
+
+@router.message(Command("help"))
+async def on_help(msg: Message):
+    help_text = (
+        "📖 <b>HƯỚNG DẪN CHECKER V2</b>\n\n"
+        "<b>💰 TÀI KHOẢN & NẠP TIỀN</b>\n"
+        "• /bank - Xem thông tin nạp tiền\n"
+        "• /bank &lt;số_tiền&gt; - Nạp nhanh (VD: /bank 50000)\n"
+        "• /balance - Xem số dư hiện tại\n"
+        "• /sub - Xem gói và mua gói\n\n"
+        "<b>1. TIKTOK COMMANDS</b>\n"
+        "• /tiktok &lt;user&gt; - Check nhanh\n"
+        "• /track &lt;user&gt; - Theo dõi follower\n"
+        "• /untrack &lt;user&gt; - Huỷ theo dõi\n"
+        "• /tracklist - Ds theo dõi\n"
+        "• /trackv &lt;link&gt; [phút] - Check video\n"
+        "• /untrackv &lt;link&gt; - Huỷ video\n"
+        "• /trackvlist - Ds video\n\n"
+        "<b>2. INSTAGRAM COMMANDS</b>\n"
+        "• /ig &lt;user&gt; - Check nhanh IG\n"
+        "• /trackig &lt;user&gt; - Theo dõi follower IG\n"
+        "• /untrackig &lt;user&gt; - Huỷ IG\n"
+        "• /trackiglist - Ds IG\n"
+        "• /trackvig &lt;link&gt; [phút] - Check IG post\n"
+        "• /untrackvig &lt;link&gt; - Huỷ IG post\n"
+        "• /trackviglist - Ds IG post\n\n"
+        "<b>3. FACEBOOK COMMANDS</b>\n"
+        "• /fb &lt;uid/link&gt; - Check FB Live/Die\n"
+        "• /trackfb &lt;uid&gt; - Theo dõi Live/Die\n"
+        "• /untrackfb &lt;uid&gt; - Huỷ theo dõi\n"
+        "• /trackfblist - Ds FB đang theo dõi\n"
+        "💬 <b>Hỗ trợ:</b>\n"
+        "• Telegram: @khaikhai998\n"
+        "• Facebook: facebook.com/khaitradecoin"
+    )
+    await msg.answer(help_text)
+
+
+@router.message(Command("tiktok"))
+async def on_tiktok(msg: Message):
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await msg.answer("⚠️ Cú pháp: /tiktok &lt;username&gt;\nVí dụ: /tiktok cristiano")
+        return
+    username = parse_username(parts[1].strip())
+    if not username:
+        await msg.answer("❌ Không nhận diện được username.")
+        return
+    await process_tiktok_check(msg, username)
+@router.message(Command("fb"))
+async def on_fb(msg: Message):
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await msg.answer("⚠️ Cú pháp: /fb &lt;uid&gt;\nVí dụ: /fb 100089260699193")
+        return
+    from .fb import extract_uid
+    uid = extract_uid(parts[1].strip())
+    if not uid:
+        await msg.answer("❌ Không nhận diện được UID.")
+        return
+    await process_fb_check(msg, uid)
+
+
+# ─── PROCESS FB POST CHECK ────────────────────────────────────
+async def process_fb_post_check(msg: Message, url: str):
+    wait = await msg.answer("⏳ Đang lấy thông tin bài viết Facebook...")
+    from .fb import fetch_fb_post_info, build_fb_post_caption
+    info = await fetch_fb_post_info(url)
+    if not info or not info.get("post_id"):
+        await wait.edit_text("❌ Không lấy được thông tin bài viết FB. Vui lòng kiểm tra lại link.")
+        return
+    caption = build_fb_post_caption(info)
+    await wait.edit_text(caption, disable_web_page_preview=True)
+
+
+@router.message(Command("track"))
+async def on_track(msg: Message):
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await msg.answer("⚠️ Cú pháp: /track &lt;username&gt;\nVí dụ: /track cristiano")
+        return
+    username = parse_username(parts[1].strip())
+    if not username:
+        await msg.answer("❌ Không nhận diện được username.")
+        return
+
+    wait = await msg.answer(f"⏳ Đang thêm theo dõi <b>@{username}</b>...")
+    try:
+        info = await fetch_tiktok_info(username)
+        u = msg.from_user
+        result = db.add_track(
+            u.id, u.username or u.full_name,
+            info["username"],
+            info["followers"], info["following"], info["videos"]
+        )
+        if result == -1:
+            await wait.edit_text(f"⚠️ Bạn đã theo dõi <b>@{info['username']}</b> rồi!")
+            return
+        db.add_log("track_add", f"Thêm theo dõi @{info['username']}", u.id, info["username"])
+        
+        caption = (
+            f"✅ <b>Đã thêm theo dõi tài khoản!</b>\n\n"
+            f"📱 Kênh: <b><a href='https://www.tiktok.com/@{info['username']}'>@{info['username']}</a></b>\n"
+            f"👥 Followers hiện tại: <b>{fmt_num(info['followers'])}</b>\n"
+            f"➡️ Đang follow: <b>{fmt_num(info['following'])}</b>\n"
+            f"🎬 Tổng videos: <b>{fmt_num(info['videos'])}</b>\n\n"
+            f"📩 <i>Bot sẽ thông báo khi có thay đổi follower.</i>"
+        )
+        if info.get("avatar"):
+            try:
+                await msg.answer_photo(photo=URLInputFile(info["avatar"], filename="avatar.jpg"), caption=caption)
+                await wait.delete()
+            except Exception:
+                await wait.edit_text(caption, disable_web_page_preview=False)
+        else:
+            await wait.edit_text(caption, disable_web_page_preview=False)
+    except ValueError as e:
+        await wait.edit_text(f"❌ {e}")
+    except Exception as e:
+        await wait.edit_text(f"❌ Lỗi: {e}")
+
+
+@router.message(Command("untrack"))
+async def on_untrack(msg: Message):
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await msg.answer("⚠️ Cú pháp: /untrack &lt;username&gt;\nVí dụ: /untrack cristiano")
+        return
+    username = parse_username(parts[1].strip())
+    if not username:
+        await msg.answer("❌ Không nhận diện được username.")
+        return
+    ok = db.remove_track(msg.from_user.id, username)
+    if ok:
+        db.add_log("track_remove", f"Huỷ theo dõi @{username}", msg.from_user.id, username)
+        await msg.answer(f"✅ Đã huỷ theo dõi <b>@{username}</b>.")
+    else:
+        await msg.answer(f"❌ Không tìm thấy <b>@{username}</b> trong danh sách của bạn.")
+
+
+@router.message(Command("tracklist"))
+async def on_tracklist(msg: Message):
+    tracks = db.user_tracks(msg.from_user.id)
+    if not tracks:
+        await msg.answer(
+            "📋 Bạn chưa theo dõi tài khoản nào.\n\n"
+            "Dùng /track &lt;username&gt; để thêm."
+        )
+        return
+    lines = ["📋 <b>Danh sách đang theo dõi:</b>\n"]
+    for i, t in enumerate(tracks, 1):
+        lines.append(
+            f"{i}. <b>@{t['tiktok_username']}</b>\n"
+            f"   👥 {fmt_num(t['last_followers'])} followers"
+        )
+    await msg.answer("\n".join(lines))
+
+
+@router.message(Command("trackvlist"))
+async def on_trackvlist(msg: Message):
+    vtracks = db.user_video_tracks(msg.from_user.id)
+    if not vtracks:
+        await msg.answer("📋 Bạn chưa theo dõi video nào.\n\nDùng /trackv &lt;link_video&gt; để thêm.")
+        return
+    lines = ["🎬 <b>Video đang theo dõi:</b>\n"]
+    for i, v in enumerate(vtracks, 1):
+        interval_min = v["check_interval"] // 60
+        desc = (v["video_desc"][:50] + "...") if len(v.get("video_desc","")) > 50 else v.get("video_desc","")
+        lines.append(
+            f"{i}. <a href=\"{v['video_url']}\">@{v['tiktok_username']}</a>\n"
+            f"   📝 {desc or 'Khong co mo ta'}\n"
+            f"   ▶️ {v['last_plays']:,}  ❤️ {v['last_likes']:,}  💬 {v['last_comments']:,}  🔁 {v['last_shares']:,}  ⭐ {v.get('last_favorites', 0):,}\n"
+            f"   ⏱ Check mỗi {interval_min} phút"
+        )
+    await msg.answer("\n\n".join(lines))
+
+
+@router.message(Command("trackv"))
+async def on_trackv(msg: Message):
+    parts = (msg.text or "").split(maxsplit=2)
+    if len(parts) < 2:
+        await msg.answer(
+            "⚠️ Cú pháp: /trackv &lt;link_video&gt; [phút]\n\n"
+            "Ví dụ:\n"
+            "  /trackv https://tiktok.com/@user/video/123\n"
+            "  /trackv https://tiktok.com/@user/video/123 30   (check mỗi 30 phút)"
+        )
+        return
+
+    from .tiktok import fetch_video_info, parse_video_id
+    video_url = parts[1].strip()
+    interval_min = 60
+    if len(parts) >= 3:
+        try:
+            interval_min = max(1, int(parts[2]))
+        except ValueError:
+            pass
+
+    if not parse_video_id(video_url):
+        await msg.answer("❌ Link video không hợp lệ. Cần dạng: tiktok.com/@user/video/ID")
+        return
+
+    wait = await msg.answer(f"⏳ Đang lấy thông tin video...")
+    try:
+        info = await fetch_video_info(video_url)
+        u = msg.from_user
+        r = db.add_video_track(
+            u.id, u.username or u.full_name,
+            video_url, info["id"], info.get("username",""),
+            info.get("desc",""), info.get("cover",""),
+            interval_min * 60,
+            info["plays"], info["likes"], info["comments"], info["shares"], info.get("favorites", 0)
+        )
+        if r == -1:
+            await wait.edit_text("⚠️ Bạn đã theo dõi video này rồi!")
+            return
+        db.add_log("video_track_add", f"Them video @{info.get('username','')}", u.id, info.get("username",""))
+        desc = (info.get("desc", "")[:80]+"...") if len(info.get("desc","")) > 80 else info.get("desc","")
+        caption = (
+            f"✅ <b>Đã thêm theo dõi video!</b>\n\n"
+            f"📱 Kênh: <b><a href='https://www.tiktok.com/@{info.get('username','')}'>@{info.get('username','')}</a></b>\n"
+            f"📝 Mô tả: <i>{desc or 'Không có mô tả'}</i>\n\n"
+            f"📊 <b>Thống kê hiện tại:</b>\n"
+            f" ┣ ▶️ Lượt xem: <b>{info['plays']:,}</b>\n"
+            f" ┣ ❤️ Lượt thích: <b>{info['likes']:,}</b>\n"
+            f" ┣ 💬 Bình luận: <b>{info['comments']:,}</b>\n"
+            f" ┣ 🔁 Chia sẻ: <b>{info['shares']:,}</b>\n"
+            f" ┗ ⭐ Yêu thích: <b>{info.get('favorites', 0):,}</b>\n\n"
+            f"⏱ <i>Tự động check mỗi <b>{interval_min} phút</b></i>\n"
+            f"📩 <i>Bot sẽ thông báo khi có tương tác mới!</i>"
+        )
+        if info.get("cover"):
+            try:
+                await msg.answer_photo(photo=URLInputFile(info["cover"], filename="cover.jpg"), caption=caption)
+                await wait.delete()
+            except Exception:
+                await wait.edit_text(caption, disable_web_page_preview=False)
+        else:
+            await wait.edit_text(caption, disable_web_page_preview=False)
+    except Exception as e:
+        await wait.edit_text(f"❌ Lỗi: {e}")
+
+
+@router.message(Command("untrackv"))
+async def on_untrackv(msg: Message):
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2:
+        await msg.answer("⚠️ Cú pháp: /untrackv &lt;link_video&gt;")
+        return
+    from .tiktok import parse_video_id
+    vid_id = parse_video_id(parts[1].strip())
+    if not vid_id:
+        await msg.answer("❌ Không nhận diện được Video ID.")
+        return
+    ok = db.remove_video_track(msg.from_user.id, vid_id)
+    if ok:
+        db.add_log("video_track_remove", f"Huy video ID {vid_id}", msg.from_user.id)
+        await msg.answer("✅ Đã huỷ theo dõi video.")
+    else:
+        await msg.answer("❌ Không tìm thấy video này trong danh sách của bạn.")
+
+# ─── INSTAGRAM COMMANDS ──────────────────────────────────────
+@router.message(Command("ig"))
+async def on_ig(msg: Message):
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await msg.answer("⚠️ Cú pháp: /ig &lt;username&gt;\nVí dụ: /ig cristiano")
+        return
+    username = parse_ig_username(parts[1].strip())
+    if not username:
+        await msg.answer("❌ Không nhận diện được username IG.")
+        return
+    await process_ig_check(msg, username)
+
+@router.message(Command("trackig"))
+async def on_trackig(msg: Message):
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await msg.answer("⚠️ Cú pháp: /trackig &lt;username&gt;\nVí dụ: /trackig cristiano")
+        return
+    username = parse_ig_username(parts[1].strip())
+    if not username:
+        await msg.answer("❌ Không nhận diện được username IG.")
+        return
+
+    wait = await msg.answer(f"⏳ Đang thêm theo dõi IG <b>@{username}</b>...")
+    try:
+        info = await fetch_ig_info(username)
+        u = msg.from_user
+        result = db.add_ig_track(
+            u.id, u.username or u.full_name,
+            info["username"],
+            info["followers"], info["following"], info["posts"]
+        )
+        if result == -1:
+            await wait.edit_text(f"⚠️ Bạn đã theo dõi IG <b>@{info['username']}</b> rồi!")
+            return
+        db.add_log("track_add", f"Thêm theo dõi IG @{info['username']}", u.id, info["username"])
+        caption = (
+            f"✅ <b>Đã thêm theo dõi tài khoản IG!</b>\n\n"
+            f"📸 Kênh: <b><a href='https://www.instagram.com/{info['username']}'>@{info['username']}</a></b>\n"
+            f"👥 Followers hiện tại: <b>{fmt_num(info['followers'])}</b>\n"
+            f"➡️ Đang follow: <b>{fmt_num(info['following'])}</b>\n"
+            f"🖼 Bài viết: <b>{fmt_num(info['posts'])}</b>\n\n"
+            f"📩 <i>Bot sẽ thông báo khi có thay đổi follower.</i>"
+        )
+        if info.get("avatar"):
+            try:
+                await msg.answer_photo(photo=URLInputFile(info["avatar"], filename="avatar.jpg"), caption=caption)
+                await wait.delete()
+            except Exception:
+                await wait.edit_text(caption, disable_web_page_preview=False)
+        else:
+            await wait.edit_text(caption, disable_web_page_preview=False)
+    except Exception as e:
+        await wait.edit_text(f"❌ Lỗi: {e}")
+
+@router.message(Command("untrackig"))
+async def on_untrackig(msg: Message):
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await msg.answer("⚠️ Cú pháp: /untrackig &lt;username&gt;")
+        return
+    username = parse_ig_username(parts[1].strip())
+    if not username: return
+    ok = db.remove_ig_track(msg.from_user.id, username)
+    if ok:
+        db.add_log("track_remove", f"Huỷ theo dõi IG @{username}", msg.from_user.id, username)
+        await msg.answer(f"✅ Đã huỷ theo dõi IG <b>@{username}</b>.")
+    else:
+        await msg.answer(f"❌ Không tìm thấy IG <b>@{username}</b> trong danh sách của bạn.")
+
+@router.message(Command("trackiglist"))
+async def on_trackiglist(msg: Message):
+    tracks = db.user_ig_tracks(msg.from_user.id)
+    if not tracks:
+        await msg.answer("📋 Bạn chưa theo dõi tài khoản IG nào.")
+        return
+    lines = ["📸 <b>Danh sách IG đang theo dõi:</b>\n"]
+    for i, t in enumerate(tracks, 1):
+        lines.append(
+            f"{i}. <b>@{t['ig_username']}</b>\n"
+            f"   👥 {fmt_num(t['last_followers'])} followers"
+        )
+    await msg.answer("\n".join(lines))
+
+@router.message(Command("trackvig"))
+async def on_trackvig(msg: Message):
+    parts = (msg.text or "").split(maxsplit=2)
+    if len(parts) < 2:
+        await msg.answer(
+            "⚠️ Cú pháp: /trackvig &lt;link_bài_viết_ig&gt; [phút]\n\n"
+            "Ví dụ:\n"
+            "  /trackvig https://www.instagram.com/p/C123456/\n"
+            "  /trackvig https://www.instagram.com/p/C123456/ 30"
+        )
+        return
+
+    post_url = parts[1].strip()
+    interval_min = 60
+    if len(parts) >= 3:
+        try: interval_min = max(1, int(parts[2]))
+        except ValueError: pass
+
+    post_id = parse_ig_post_id(post_url)
+    if not post_id:
+        await msg.answer("❌ Link bài viết IG không hợp lệ.")
+        return
+
+    wait = await msg.answer(f"⏳ Đang lấy thông tin bài viết IG...")
+    try:
+        info = await fetch_ig_post_info(post_url)
+        u = msg.from_user
+        r = db.add_ig_video_track(
+            u.id, u.username or u.full_name,
+            post_url, info["id"], info.get("username",""),
+            info.get("desc",""), info.get("cover",""),
+            interval_min * 60,
+            info["likes"], info["comments"], info.get("views", 0)
+        )
+        if r == -1:
+            await wait.edit_text("⚠️ Bạn đã theo dõi bài viết IG này rồi!")
+            return
+        db.add_log("video_track_add", f"Them IG post {info['id']}", u.id, info.get("username",""))
+        desc = (info.get("desc","")[:80]+"...") if len(info.get("desc","")) > 80 else info.get("desc","")
+        caption = (
+            f"✅ <b>Đã thêm theo dõi bài viết IG!</b>\n\n"
+            f"📸 Kênh: <b><a href='https://www.instagram.com/{info.get('username','')}'>@{info.get('username','')}</a></b>\n"
+            f"📝 Mô tả: <i>{desc or 'Không có mô tả'}</i>\n\n"
+            f"📊 <b>Thống kê hiện tại:</b>\n"
+            f" ┣ ❤️ Lượt thích: <b>{info['likes']:,}</b>\n"
+            f" ┣ 💬 Bình luận: <b>{info['comments']:,}</b>\n"
+            f" ┗ 👁️ Lượt xem: <b>{info.get('views', 0):,}</b>\n\n"
+            f"⏱ <i>Tự động check mỗi <b>{interval_min} phút</b></i>\n"
+            f"📩 <i>Bot sẽ thông báo khi có tương tác mới!</i>"
+        )
+        if info.get("cover"):
+            try:
+                await msg.answer_photo(photo=URLInputFile(info["cover"], filename="cover.jpg"), caption=caption)
+                await wait.delete()
+            except Exception:
+                await wait.edit_text(caption, disable_web_page_preview=False)
+        else:
+            await wait.edit_text(caption, disable_web_page_preview=False)
+    except Exception as e:
+        await wait.edit_text(f"❌ Lỗi: {e}")
+
+@router.message(Command("untrackvig"))
+async def on_untrackvig(msg: Message):
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2: return
+    post_id = parse_ig_post_id(parts[1].strip())
+    if not post_id: return
+    ok = db.remove_ig_video_track(msg.from_user.id, post_id)
+    if ok:
+        await msg.answer("✅ Đã huỷ theo dõi bài viết IG.")
+    else:
+        await msg.answer("❌ Không tìm thấy bài viết IG này.")
+
+@router.message(Command("trackviglist"))
+async def on_trackviglist(msg: Message):
+    vtracks = db.user_ig_video_tracks(msg.from_user.id)
+    if not vtracks:
+        await msg.answer("📋 Bạn chưa theo dõi bài viết IG nào.")
+        return
+    lines = ["🎬 <b>Bài viết IG đang theo dõi:</b>\n"]
+    for i, v in enumerate(vtracks, 1):
+        interval_min = v["check_interval"] // 60
+        desc = (v["post_desc"][:50] + "...") if len(v.get("post_desc","")) > 50 else v.get("post_desc","")
+        lines.append(
+            f"{i}. <a href=\"{v['post_url']}\">@{v['ig_username']}</a>\n"
+            f"   📝 {desc or 'Khong co mo ta'}\n"
+            f"   ❤️ {v['last_likes']:,}  💬 {v['last_comments']:,}\n"
+            f"   ⏱ Check mỗi {interval_min} phút"
+        )
+    await msg.answer("\n\n".join(lines))
 
 
 def _sub_active(user) -> bool:
     return user and user["sub_until"] and user["sub_until"] > now()
-
 
 def _sub_text(user) -> str:
     if _sub_active(user):
@@ -55,8 +820,7 @@ def _sub_text(user) -> str:
         return f"Còn hạn ({days_left} ngày)"
     return "Chưa có / đã hết hạn"
 
-
-def status_caption(status: str, note: Optional[str], price, header: str = "") -> str:
+def status_caption(status: str, note: str, price, header: str = "") -> str:
     icon = "🟢" if status == "live" else "🔴"
     word = "LIVE" if status == "live" else "DIE"
     lines = []
@@ -69,9 +833,8 @@ def status_caption(status: str, note: Optional[str], price, header: str = "") ->
         lines.append(f"Giá: {vnd(price)}")
     return "\n".join(lines)
 
-
 async def _send_card(bot: Bot, chat_id: int, uid: str, status: str, note, price,
-                     avatar: Optional[str], header: str = ""):
+                     avatar: str, header: str = ""):
     caption = status_caption(status, note, price, header)
     if avatar:
         try:
@@ -81,54 +844,15 @@ async def _send_card(bot: Bot, chat_id: int, uid: str, status: str, note, price,
             pass
     await bot.send_message(chat_id, caption)
 
-
-@router.message(CommandStart())
-async def on_start(msg: Message):
-    u = msg.from_user
-    user = db.upsert_user(u.id, u.username or "", u.full_name or "")
-    db.add_log("system", f"/start {u.id} @{u.username}", u.id)
-    text = (
-        f"Xin chào <b>{u.full_name}</b>!\n"
-        f"Đã kết nối tài khoản của bạn.\n\n"
-        f"Số dư: <b>{vnd(user['balance'])}</b>\n"
-        f"Gói: <b>{_sub_text(user)}</b>\n\n"
-        f"Dùng /check để thêm UID theo dõi, /sub để mua gói.\n"
-        f"Hỗ trợ: Telegram @{config.SUPPORT_TELEGRAM} • Facebook {config.SUPPORT_FACEBOOK}"
-    )
-    await msg.answer(text, reply_markup=MENU)
-
-
-@router.message(Command("menu"))
-async def on_menu(msg: Message):
-    await msg.answer("Menu đã sẵn sàng.", reply_markup=MENU)
-
-
-@router.message(Command("help"))
-async def on_help(msg: Message):
-    text = (
-        "<b>Hướng dẫn</b>\n"
-        "/check {uid} [ghi chú] [giá] [số ngày]\n"
-        "Ví dụ: /check 123 Mở khoá cho anh D 50000 7\n"
-        "→ theo dõi UID 123, ghi chú \"Mở khoá cho anh D\", giá 50.000, trong 7 ngày.\n\n"
-        "Quy tắc: phần nào không điền thì bỏ qua. Hai số ở cuối là [giá] [số ngày]; "
-        "nếu chỉ có một số thì hiểu là số ngày.\n\n"
-        "/list xem danh sách • /remove {uid} bỏ theo dõi\n"
-        "/balance xem số dư • /sub mua/gia hạn gói\n\n"
-        f"Hỗ trợ: Telegram @{config.SUPPORT_TELEGRAM} • Facebook {config.SUPPORT_FACEBOOK}"
-    )
-    await msg.answer(text)
-
-
 @router.message(Command("balance"))
 async def on_balance(msg: Message):
     user = db.get_user(msg.from_user.id)
     if not user:
         await msg.answer("Bạn chưa /start. Gõ /start trước nhé.")
         return
-    await msg.answer(
-        f"Số dư: <b>{vnd(user['balance'])}</b>\nGói: <b>{_sub_text(user)}</b>"
-    )
+    await msg.answer(f"Số dư: <b>{vnd(user['balance'])}</b>\nGói: <b>{_sub_text(user)}</b>")
 
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 @router.message(Command("sub"))
 async def on_sub(msg: Message):
@@ -142,7 +866,6 @@ async def on_sub(msg: Message):
     )
     await msg.answer("Chọn gói muốn mua / gia hạn:", reply_markup=kb)
 
-
 @router.callback_query(F.data.startswith("sub:"))
 async def on_sub_pick(cb: CallbackQuery):
     months = int(cb.data.split(":")[1])
@@ -153,10 +876,7 @@ async def on_sub_pick(cb: CallbackQuery):
         await cb.answer("Bạn chưa /start.", show_alert=True)
         return
     if user["balance"] < cost:
-        await cb.answer(
-            f"Số dư không đủ. Cần {vnd(cost)}, bạn có {vnd(user['balance'])}.",
-            show_alert=True,
-        )
+        await cb.answer(f"Số dư không đủ. Cần {vnd(cost)}, bạn có {vnd(user['balance'])}.", show_alert=True)
         return
     db.adjust_balance(cb.from_user.id, -cost, f"Mua gói {months} tháng")
     base = max(now(), user["sub_until"] or 0)
@@ -169,8 +889,7 @@ async def on_sub_pick(cb: CallbackQuery):
     )
     await cb.answer("Thành công")
 
-
-@router.message(Command("list"))
+@router.message(Command("list", "trackfblist"))
 async def on_list(msg: Message):
     rows = db.user_watches(msg.from_user.id)
     if not rows:
@@ -184,8 +903,7 @@ async def on_list(msg: Message):
         lines.append(f"{icon} {w['uid']}{extra}")
     await msg.answer("\n".join(lines))
 
-
-@router.message(Command("remove"))
+@router.message(Command("remove", "untrackfb"))
 async def on_remove(msg: Message):
     parts = (msg.text or "").split()
     if len(parts) < 2:
@@ -194,8 +912,7 @@ async def on_remove(msg: Message):
     n = db.remove_watch(msg.from_user.id, parts[1].strip())
     await msg.answer("Đã bỏ theo dõi." if n else "Không tìm thấy UID này.")
 
-
-@router.message(Command("check"))
+@router.message(Command("check", "trackfb"))
 async def on_check(msg: Message):
     user = db.get_user(msg.from_user.id)
     if not user:
@@ -210,9 +927,10 @@ async def on_check(msg: Message):
         await msg.answer("Cú pháp: /check {uid} [ghi chú] [giá] [số ngày]")
         return
 
-    res = await fb.check_uid(uid)
+    from .fb import check_uid, avatar_url
+    res = await check_uid(uid)
     status = "live" if res["alive"] else "die"
-    avatar = res["avatar_url"] or fb.avatar_url(uid)
+    avatar = res["avatar_url"] or avatar_url(uid)
     expire_at = now() + days * DAY if days else 0
     wid = db.add_watch(msg.from_user.id, res["uid"], note or "", price or 0, expire_at)
     db.update_watch_status(wid, status, avatar)
@@ -226,13 +944,22 @@ async def on_check(msg: Message):
 
 @router.message(F.text & ~F.text.startswith("/"))
 async def on_other(msg: Message):
-    await msg.answer("Gõ /menu để xem các chức năng, hoặc /help để được hướng dẫn.", reply_markup=MENU)
+    username = parse_username(msg.text or "")
+    if username:
+        await process_tiktok_check(msg, username)
+    else:
+        await msg.answer(
+            "💡 Gõ /tiktok &lt;username&gt; để check TikTok.\n"
+            "Hoặc /help để xem hướng dẫn.",
+            reply_markup=MENU,
+        )
 
 
+# ─── BOT MANAGER ─────────────────────────────────────────────
 class BotManager:
     def __init__(self):
         self.bot: Optional[Bot] = None
-        self.dp: Optional[Dispatcher] = None
+        self.dp:  Optional[Dispatcher] = None
         self._task: Optional[asyncio.Task] = None
 
     @property
@@ -246,7 +973,8 @@ class BotManager:
         self.bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
         try:
             me = await self.bot.get_me()
-        except Exception:
+        except Exception as e:
+            log.error("Loi get_me: %s", e)
             self.bot = None
             return False
         try:
@@ -256,8 +984,12 @@ class BotManager:
         self.dp = Dispatcher()
         self.dp.include_router(router)
         await self.bot.set_my_commands(COMMANDS)
-        self._task = asyncio.create_task(self.dp.start_polling(self.bot, handle_signals=False))
+        poller.set_bot(self.bot)
+        self._task = asyncio.create_task(
+            self.dp.start_polling(self.bot, handle_signals=False)
+        )
         db.add_log("system", f"Bot khởi động: @{me.username}")
+        log.info("Bot @%s đang chạy.", me.username)
         return True
 
     async def stop(self):
@@ -282,8 +1014,6 @@ class BotManager:
         self.dp = None
 
     async def verify_token(self, token: str) -> Optional[str]:
-        if not token:
-            return None
         b = Bot(token=token)
         try:
             me = await b.get_me()
@@ -295,3 +1025,262 @@ class BotManager:
 
 
 manager = BotManager()
+
+
+# ─── ZALO BOT MANAGER ────────────────────────────────────────
+class ZaloBotManager:
+    def __init__(self):
+        self.token: str = ""
+        self.base_url: str = ""
+        self._task: Optional[asyncio.Task] = None
+        self._client: Optional[httpx.AsyncClient] = None
+        self.offset = 0
+
+    @property
+    def running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+    async def start(self, token: str) -> bool:
+        await self.stop()
+        if not token:
+            return False
+        self.token = token
+        self.base_url = f"https://bot-api.zaloplatforms.com/bot{token}"
+        self._client = httpx.AsyncClient(timeout=35.0)
+
+        # Test token validity via getMe (if exists, or just start polling)
+        log.info("Zalo Bot starting polling...")
+        poller.set_zalo_bot(self)
+        self._task = asyncio.create_task(self.polling_loop())
+        return True
+
+    async def stop(self):
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
+    def _strip_html(self, html_text: str) -> str:
+        """Convert HTML to plain text for Zalo (does not support HTML)."""
+        # Replace links: <a href="URL">TEXT</a> -> TEXT (URL)
+        def link_replacer(match):
+            url = match.group(1)
+            text = match.group(2)
+            if url in text:
+                return text
+            return f"{text} ({url})"
+        text = re.sub(r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', link_replacer, html_text)
+        # Remove remaining tags: <b>, <i>, <code>, etc.
+        text = re.sub(r'<[^>]+>', '', text)
+        # Decode HTML entities
+        text = text.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&').replace('&quot;', '"')
+        return text
+
+    async def send_message(self, chat_id: str, text: str, reply_markup: dict = None):
+        if not self._client: return
+        text = self._strip_html(text)
+        url = f"{self.base_url}/sendMessage"
+        payload = {
+            "chat_id": chat_id,
+            "text": text
+        }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
+        try:
+            resp = await self._client.post(url, json=payload)
+            data = resp.json()
+            if not data.get("ok"):
+                log.warning("Zalo sendMessage failed: %s", data)
+        except Exception as e:
+            log.warning("Zalo sendMessage error: %s", e)
+
+    async def send_photo(self, chat_id: str, photo_url: str, caption: str = ""):
+        if not self._client: return
+        caption = self._strip_html(caption)
+        text = f"{caption}\n\n📷 Ảnh: {photo_url}" if photo_url else caption
+        await self.send_message(chat_id, text)
+
+    async def polling_loop(self):
+        while True:
+            try:
+                url = f"{self.base_url}/getUpdates"
+                payload = {"offset": self.offset, "timeout": 30}
+                resp = await self._client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("ok"):
+                        result = data.get("result", [])
+                        # Zalo co the tra ve dict (1 message) hoac list (nhieu message)
+                        if isinstance(result, dict):
+                            updates = [result]
+                        elif isinstance(result, list):
+                            updates = result
+                        else:
+                            updates = []
+
+                        for u in updates:
+                            if not isinstance(u, dict):
+                                continue
+                            # Cap nhat offset
+                            upd_id = u.get("update_id")
+                            if upd_id is not None:
+                                self.offset = int(upd_id) + 1
+                            # LOG CAU TRUC THUC TE DE DEBUG
+                            log.warning("ZALO UPDATE STRUCT: keys=%s | data=%s", list(u.keys()), str(u)[:500])
+                            # Xu ly tin nhan - thu nhieu key khac nhau
+                            msg = u.get("message") or u.get("edited_message") or u.get("channel_post")
+                            # Neu chinh u la tin nhan (Zalo co the tra truc tiep object)
+                            if msg is None and u.get("text") is not None:
+                                msg = u
+                                
+                            if "callback_query" in u:
+                                await self.handle_callback(u["callback_query"])
+                            elif isinstance(msg, dict):
+                                await self.handle_message(msg)
+                            elif isinstance(msg, str):
+                                await self.handle_message({"text": msg, "chat": {}, "from": {}})
+
+                    else:
+                        err_code = data.get("error_code")
+                        if err_code not in (408, 504):
+                            log.warning("Zalo getUpdates error: %s", data)
+                            await asyncio.sleep(2)
+                else:
+                    log.warning("Zalo HTTP %s: %s", resp.status_code, resp.text[:200])
+                    await asyncio.sleep(2)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                log.error("Zalo polling error: %s", e, exc_info=True)
+                await asyncio.sleep(5)
+
+
+
+    async def handle_callback(self, cb: dict):
+        data = cb.get("data", "")
+        if not data: return
+        
+        chat_id = cb.get("message", {}).get("chat", {}).get("id")
+        
+        if data.startswith("zalo_confirm_"):
+            parts = data.split("_")
+            if len(parts) >= 4:
+                tg_id = int(parts[2])
+                amount = int(parts[3])
+                
+                code = db.get_unused_code(amount)
+                
+                try:
+                    kb = InlineKeyboardMarkup(inline_keyboard=[[
+                        InlineKeyboardButton(text="🎁 Sử dụng luôn", callback_data=f"use_code_{code}")
+                    ]])
+                    from .bot import manager
+                    await manager.bot.send_message(
+                        tg_id, 
+                        f"🎉 <b>Thanh toán thành công!</b>\n\nĐây là mã code nạp tiền trị giá <b>{vnd(amount)}</b> của bạn:\n"
+                        f"👉 <code>{code}</code>\n\n"
+                        "<i>Nhấn nút bên dưới để sử dụng mã ngay lập tức!</i>",
+                        reply_markup=kb
+                    )
+                    
+                    if chat_id:
+                        await self.send_message(str(chat_id), f"✅ Đã xác nhận và phát mã {code} ({vnd(amount)}) cho ID {tg_id}")
+                except Exception as e:
+                    log.error(f"Lỗi gửi code cho khách: {e}")
+                    if chat_id:
+                        await self.send_message(str(chat_id), f"❌ Lỗi gửi code cho khách: {e}")
+
+    async def handle_message(self, msg: dict):
+        chat_id = str(msg.get("chat", {}).get("id", ""))
+        text = msg.get("text", "").strip()
+        if not chat_id or not text: return
+
+        username = msg.get("from", {}).get("display_name") or msg.get("from", {}).get("username") or msg.get("from", {}).get("first_name", chat_id)
+        
+        txt_lower = text.lower()
+        if txt_lower.startswith("/start") or txt_lower.startswith("/id"):
+            await self.cmd_help(chat_id, username)
+        elif txt_lower.startswith("/topup"):
+            await self.cmd_topup(chat_id, text)
+        elif txt_lower.startswith("/phatcode"):
+            await self.cmd_phatcode(chat_id, text)
+        else:
+            await self.send_message(chat_id, f"💡 Zalo Chat ID của bạn: {chat_id}\n\nLệnh có sẵn:\n- Copy Chat ID dán vào web để nhận thông báo\n- Phát Code: /phatcode <ID> <SỐ TIỀN>\n- Cộng thẳng: /topup <ID> <SỐ TIỀN>")
+
+    async def cmd_phatcode(self, chat_id, text):
+        admin_id = db.get_setting("admin_zalo_id", "")
+        if not admin_id or chat_id != admin_id:
+            await self.send_message(chat_id, "⛔ Chỉ Admin mới được dùng lệnh này!")
+            return
+            
+        parts = text.split()
+        if len(parts) < 3:
+            await self.send_message(chat_id, "⚠️ Cú pháp sai! Vui lòng gửi lệnh có sẵn trong thông báo.\nVD: /phatcode 12345 50000")
+            return
+            
+        try:
+            tg_id = int(parts[1])
+            amount = int(parts[2])
+            
+            code = db.get_unused_code(amount)
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🎁 Sử dụng luôn", callback_data=f"use_code_{code}")
+            ]])
+            from .bot import manager
+            await manager.bot.send_message(
+                tg_id, 
+                f"🎉 <b>Thanh toán thành công!</b>\n\nĐây là mã code nạp tiền trị giá <b>{vnd(amount)}</b> của bạn:\n"
+                f"👉 <code>{code}</code>\n\n"
+                "<i>Nhấn nút bên dưới để sử dụng mã ngay lập tức!</i>",
+                reply_markup=kb
+            )
+            await self.send_message(chat_id, f"✅ Đã phát mã {code} ({vnd(amount)}) cho ID {tg_id}")
+        except Exception as e:
+            await self.send_message(chat_id, f"❌ Lỗi: {e}")
+
+    async def cmd_help(self, chat_id, username):
+        help_text = (
+            f"👋 Xin chào Admin <b>{username}</b>!\n\n"
+            f"🆔 Zalo Chat ID của bạn là: {chat_id}\n\n"
+            "1. Copy Chat ID này và dán vào ô 'Admin Zalo Chat ID' trên Web Dashboard để nhận thông báo khách nạp tiền.\n"
+            "2. Để nạp tiền cho khách trực tiếp từ đây, dùng lệnh:\n"
+            "👉 /topup <ID_TELE> <SỐ TIỀN>\n"
+            "(Ví dụ: /topup 123456789 50000)"
+        )
+        await self.send_message(chat_id, help_text)
+
+    async def cmd_topup(self, chat_id, text):
+        admin_id = db.get_setting("admin_zalo_id", "")
+        if not admin_id or chat_id != admin_id:
+            await self.send_message(chat_id, "⛔ Chỉ Admin (Zalo ID đã cài đặt) mới được dùng lệnh này!")
+            return
+            
+        parts = text.split()
+        if len(parts) < 3:
+            await self.send_message(chat_id, "⚠️ Cú pháp sai!\nVí dụ: /topup 123456789 50000")
+            return
+            
+        try:
+            tg_id = int(parts[1])
+            amount = int(parts[2].replace(",", "").replace(".", "").replace("k", "000").replace("K", "000"))
+        except:
+            await self.send_message(chat_id, "❌ ID Telegram hoặc Số tiền không hợp lệ!")
+            return
+            
+        db.adjust_balance(tg_id, amount, "Nạp tiền qua Zalo Bot")
+        await self.send_message(chat_id, f"✅ Đã cộng thành công {vnd(amount)} cho ID Telegram: {tg_id}")
+        
+        try:
+            from .bot import manager
+            await manager.bot.send_message(tg_id, f"🎉 <b>NẠP TIỀN THÀNH CÔNG!</b>\n\nAdmin vừa cộng cho bạn: <b>{vnd(amount)}</b>\n👉 Gõ /balance để kiểm tra số dư nhé.")
+        except:
+            pass
+
+
+zalo_manager = ZaloBotManager()
