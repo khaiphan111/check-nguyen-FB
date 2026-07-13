@@ -225,7 +225,24 @@ def init_db() -> None:
                 is_used         BIGINT DEFAULT 0,
                 used_by         BIGINT DEFAULT 0,
                 created_at      BIGINT NOT NULL,
-                used_at         BIGINT DEFAULT 0
+                used_at         BIGINT DEFAULT 0,
+                max_uses        BIGINT DEFAULT 1,
+                current_uses    BIGINT DEFAULT 0,
+                expire_at       BIGINT DEFAULT 0
+            );
+            
+            CREATE TABLE IF NOT EXISTS giftcode_uses (
+                code            TEXT NOT NULL,
+                tg_id           BIGINT NOT NULL,
+                used_at         BIGINT NOT NULL,
+                PRIMARY KEY (code, tg_id)
+            );
+            
+            CREATE TABLE IF NOT EXISTS saved_codes (
+                tg_id           BIGINT NOT NULL,
+                code            TEXT NOT NULL,
+                saved_at        BIGINT NOT NULL,
+                PRIMARY KEY (tg_id, code)
             );
             """
         )
@@ -245,7 +262,10 @@ def migrate_db():
             "ALTER TABLE tg_users ADD COLUMN trial_activated BIGINT DEFAULT 0",
             "ALTER TABLE tg_users ADD COLUMN referrer_id BIGINT DEFAULT 0",
             "ALTER TABLE tg_users ADD COLUMN ref_earnings BIGINT DEFAULT 0",
-            "ALTER TABLE tg_users ADD COLUMN expired_notified BIGINT DEFAULT 0"
+            "ALTER TABLE tg_users ADD COLUMN expired_notified BIGINT DEFAULT 0",
+            "ALTER TABLE giftcodes ADD COLUMN max_uses BIGINT DEFAULT 1",
+            "ALTER TABLE giftcodes ADD COLUMN current_uses BIGINT DEFAULT 0",
+            "ALTER TABLE giftcodes ADD COLUMN expire_at BIGINT DEFAULT 0"
         ]:
             try:
                 c.execute(sql)
@@ -372,7 +392,7 @@ def activate_trial(tg_id: int, days: int) -> bool:
     return True
 
 # --- GIFTCODES ---
-def generate_code(amount: int, prefix: str = "CODE") -> str:
+def generate_code(amount: int, prefix: str = "CODE", max_uses: int = 1, expire_at: int = 0) -> str:
     import random
     import string
     with _lock:
@@ -382,14 +402,17 @@ def generate_code(amount: int, prefix: str = "CODE") -> str:
             code = f"{prefix}-{random_str}"
             exists = c.execute("SELECT id FROM giftcodes WHERE code=?", (code,)).fetchone()
             if not exists:
-                c.execute("INSERT INTO giftcodes(code, amount, created_at) VALUES(?, ?, ?)", (code, amount, int(time.time())))
+                c.execute(
+                    "INSERT INTO giftcodes(code, amount, created_at, max_uses, expire_at) VALUES(?, ?, ?, ?, ?)", 
+                    (code, amount, int(time.time()), max_uses, expire_at)
+                )
                 c.commit()
                 return code
 
 def get_unused_code(amount: int) -> str:
     with _lock:
         c = get_conn()
-        row = c.execute("SELECT code FROM giftcodes WHERE amount=? AND is_used=0 LIMIT 1", (amount,)).fetchone()
+        row = c.execute("SELECT code FROM giftcodes WHERE amount=? AND is_used=0 AND max_uses=1 LIMIT 1", (amount,)).fetchone()
         if row:
             return row["code"]
     return generate_code(amount)
@@ -397,19 +420,84 @@ def get_unused_code(amount: int) -> str:
 def get_code_info(code: str) -> Optional[sqlite3.Row]:
     return get_conn().execute("SELECT * FROM giftcodes WHERE code=?", (code,)).fetchone()
 
-def use_code(code: str, tg_id: int) -> tuple[bool, int]:
+def use_code(code: str, tg_id: int) -> tuple[bool, int, str]:
+    now_ts = int(time.time())
     with _lock:
         c = get_conn()
-        row = c.execute("SELECT amount, is_used FROM giftcodes WHERE code=?", (code,)).fetchone()
-        if not row: return False, 0
-        if row["is_used"]: return False, 0
+        row = c.execute("SELECT amount, is_used, max_uses, current_uses, expire_at FROM giftcodes WHERE code=?", (code,)).fetchone()
+        if not row: return False, 0, "Mã không tồn tại"
+        if row["is_used"] or (row["max_uses"] > 0 and row["current_uses"] >= row["max_uses"]): 
+            return False, 0, "Mã đã hết lượt sử dụng"
+        if row["expire_at"] > 0 and now_ts > row["expire_at"]:
+            return False, 0, "Mã đã hết hạn"
+        
+        # Check if user already used it
+        used = c.execute("SELECT 1 FROM giftcode_uses WHERE code=? AND tg_id=?", (code, tg_id)).fetchone()
+        if used: return False, 0, "Bạn đã sử dụng mã này rồi"
+        
         amount = row["amount"]
-        c.execute("UPDATE giftcodes SET is_used=1, used_by=?, used_at=? WHERE code=?", (tg_id, int(time.time()), code))
+        new_uses = row["current_uses"] + 1
+        is_used_now = 1 if (row["max_uses"] > 0 and new_uses >= row["max_uses"]) else 0
+        
+        c.execute("UPDATE giftcodes SET current_uses=?, is_used=?, used_by=?, used_at=? WHERE code=?", 
+                  (new_uses, is_used_now, tg_id, now_ts, code))
+        c.execute("INSERT INTO giftcode_uses(code, tg_id, used_at) VALUES(?, ?, ?)", (code, tg_id, now_ts))
+        
+        # Delete from saved_codes if exists
+        c.execute("DELETE FROM saved_codes WHERE tg_id=? AND code=?", (tg_id, code))
+        
         c.commit()
-        return True, amount
+        return True, amount, "Thành công"
+
+def save_code_for_user(tg_id: int, code: str) -> tuple[bool, str]:
+    now_ts = int(time.time())
+    with _lock:
+        c = get_conn()
+        row = c.execute("SELECT is_used, max_uses, current_uses, expire_at FROM giftcodes WHERE code=?", (code,)).fetchone()
+        if not row: return False, "Mã không tồn tại"
+        if row["is_used"] or (row["max_uses"] > 0 and row["current_uses"] >= row["max_uses"]): 
+            return False, "Mã đã hết lượt sử dụng"
+        if row["expire_at"] > 0 and now_ts > row["expire_at"]:
+            return False, "Mã đã hết hạn"
+            
+        used = c.execute("SELECT 1 FROM giftcode_uses WHERE code=? AND tg_id=?", (code, tg_id)).fetchone()
+        if used: return False, "Bạn đã sử dụng mã này rồi"
+        
+        saved = c.execute("SELECT 1 FROM saved_codes WHERE code=? AND tg_id=?", (code, tg_id)).fetchone()
+        if saved: return False, "Bạn đã lưu mã này rồi"
+        
+        c.execute("INSERT INTO saved_codes(tg_id, code, saved_at) VALUES(?, ?, ?)", (tg_id, code, now_ts))
+        c.commit()
+        return True, "Đã lưu"
+
+def get_user_saved_codes(tg_id: int) -> list:
+    q = """
+        SELECT s.code, g.amount, g.expire_at 
+        FROM saved_codes s
+        JOIN giftcodes g ON s.code = g.code
+        WHERE s.tg_id = ? 
+        AND g.is_used = 0 
+        AND (g.expire_at = 0 OR g.expire_at > ?)
+        ORDER BY s.saved_at DESC
+    """
+    return get_conn().execute(q, (tg_id, int(time.time()))).fetchall()
 
 def get_code_history() -> list:
     return get_conn().execute("SELECT * FROM giftcodes ORDER BY created_at DESC LIMIT 500").fetchall()
+
+def get_code_detailed(code: str) -> dict:
+    info = get_code_info(code)
+    if not info: return {}
+    with _lock:
+        c = get_conn()
+        uses = c.execute("SELECT u.tg_id, u.used_at, tg.username FROM giftcode_uses u LEFT JOIN tg_users tg ON u.tg_id=tg.tg_id WHERE u.code=? ORDER BY u.used_at DESC", (code,)).fetchall()
+        saves = c.execute("SELECT s.tg_id, s.saved_at, tg.username FROM saved_codes s LEFT JOIN tg_users tg ON s.tg_id=tg.tg_id WHERE s.code=? ORDER BY s.saved_at DESC", (code,)).fetchall()
+        
+    return {
+        "info": dict(info),
+        "uses": [dict(u) for u in uses],
+        "saves": [dict(s) for s in saves]
+    }
 
 # --- FB WATCHES (Live/Die) ---
 def add_watch(tg_id: int, uid: str, note: str, price: int, expire_at: int) -> int:

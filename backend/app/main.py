@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import config, db
 from .api import router as api_router
 from .bot import manager, zalo_manager
+from .admin_bot import manager as admin_manager
 from .poller import poller
 
 app = FastAPI(title=config.APP_NAME)
@@ -40,6 +41,8 @@ async def on_startup():
         if await zalo_manager.start(zalo_token):
             started_any = True
             
+    await admin_manager.start()
+            
     if started_any:
         poller.start()
 
@@ -49,6 +52,7 @@ async def on_shutdown():
     await poller.stop()
     await manager.stop()
     await zalo_manager.stop()
+    await admin_manager.stop()
 
 
 @app.get("/api/health")

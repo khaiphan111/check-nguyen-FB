@@ -44,7 +44,12 @@ class SettingsIn(BaseModel):
     bank_name: str | None = None
     bank_account: str | None = None
     bank_owner: str | None = None
+    banks_list: str | None = None
     admin_zalo_id: str | None = None
+    admin_bot_token: str | None = None
+    admin_tg_id: str | None = None
+    admin_tg_group_id: str | None = None
+    main_tg_group_id: str | None = None
 
 
 class TokenIn(BaseModel):
@@ -124,12 +129,15 @@ def get_settings(_=Depends(auth)):
 async def save_settings(body: SettingsIn, _=Depends(auth)):
     restart_bot = False
     restart_zalo = False
+    restart_admin_bot = False
     data = body.model_dump(exclude_none=True)
     for k, v in data.items():
         if k == "bot_token" and v != db.get_setting("bot_token"):
             restart_bot = True
         if k == "zalo_bot_token" and v != db.get_setting("zalo_bot_token"):
             restart_zalo = True
+        if k == "admin_bot_token" and v != db.get_setting("admin_bot_token"):
+            restart_admin_bot = True
         if k == "poll_interval":
             try:
                 v = str(max(60, int(v)))
@@ -153,12 +161,48 @@ async def save_settings(body: SettingsIn, _=Depends(auth)):
     elif not restart_zalo:
         zalo_started = zalo_manager.running
         
-    if restart_bot or restart_zalo:
+    admin_bot_token = db.get_setting("admin_bot_token") or ""
+    if restart_admin_bot:
+        from .admin_bot import manager as admin_manager
+        if admin_bot_token.strip():
+            await admin_manager.start()
+        else:
+            await admin_manager.stop()
+        
+    if restart_bot or restart_zalo or restart_admin_bot:
         if manager.running or zalo_manager.running:
             db.set_setting("setup_done", "1")
             poller.start()
             
     return {"ok": True, "bot_running": manager.running, "bot_started": started, "zalo_started": zalo_started}
+
+class CodeGenerateIn(BaseModel):
+    amount: int
+    max_uses: int
+    expire_days: int
+    expire_hours: int
+
+@router.post("/codes/generate")
+def generate_code_api(body: CodeGenerateIn, _=Depends(auth)):
+    expire_at = 0
+    total_seconds = body.expire_days * 86400 + body.expire_hours * 3600
+    if total_seconds > 0:
+        expire_at = int(time.time()) + total_seconds
+        
+    code = db.generate_code(
+        amount=body.amount, 
+        prefix="GLOBAL" if body.max_uses > 1 else "CODE", 
+        max_uses=body.max_uses, 
+        expire_at=expire_at
+    )
+    return {"ok": True, "code": code}
+
+@router.get("/codes/{code}")
+def code_detailed(code: str, _=Depends(auth)):
+    data = db.get_code_detailed(code)
+    if not data:
+        raise HTTPException(status_code=404, detail="Mã không tồn tại")
+    return data
 
 
 @router.get("/analytics")
@@ -510,7 +554,7 @@ class IGTrackIn(BaseModel):
 @router.get("/ig-tracks")
 def get_ig_tracks(_=Depends(auth)):
     c = db.get_conn()
-    rows = c.execute("SELECT ig_username, MAX(last_followers) as last_followers, MAX(last_following) as last_following, MAX(last_posts) as last_posts, MAX(avatar_url) as avatar_url FROM ig_tracks WHERE active=1 GROUP BY ig_username ORDER BY ig_username").fetchall()
+    rows = c.execute("SELECT ig_username, MAX(last_followers) as last_followers, MAX(last_following) as last_following, MAX(last_posts) as last_posts FROM ig_tracks WHERE active=1 GROUP BY ig_username ORDER BY ig_username").fetchall()
     return [dict(r) for r in rows]
 
 @router.post("/ig-tracks")

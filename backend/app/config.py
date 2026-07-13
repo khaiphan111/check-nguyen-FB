@@ -44,4 +44,7 @@ DEFAULT_SETTINGS = {
     "bank_account": "",
     "bank_owner": "",
     "admin_zalo_id": "",
+    "admin_bot_token": "",
+    "admin_tg_id": "",
+    "admin_tg_group_id": "",
 }

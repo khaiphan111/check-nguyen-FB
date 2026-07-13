@@ -55,14 +55,24 @@ class FollowerPoller:
                 
                 if now_t.tm_hour == 0 and last_backup_str != today_str:
                     admin_tg_id = db.get_setting("admin_tg_id", "")
-                    if admin_tg_id and self._bot:
+                    admin_tg_group_id = db.get_setting("admin_tg_group_id", "")
+                    
+                    admins = []
+                    if admin_tg_id: admins.append(int(admin_tg_id))
+                    if admin_tg_group_id: admins.append(int(admin_tg_group_id))
+                    
+                    if admins and self._bot:
                         from aiogram.types import FSInputFile
                         file_path = config.DB_PATH
-                        await self._bot.send_document(
-                            int(admin_tg_id),
-                            document=FSInputFile(file_path),
-                            caption=f"📦 Backup Auto - {today_str}"
-                        )
+                        for aid in admins:
+                            try:
+                                await self._bot.send_document(
+                                    aid,
+                                    document=FSInputFile(file_path),
+                                    caption=f"📦 Backup Auto - {today_str}"
+                                )
+                            except Exception as e:
+                                log.error("Loi gui backup DB toi %s: %s", aid, e)
                         db.set_setting("last_backup_date", today_str)
             except Exception as e:
                 log.error("Loi backup DB: %s", e)

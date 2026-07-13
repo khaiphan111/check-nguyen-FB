@@ -1,5 +1,5 @@
 // FB Live/Die Checker — Tác giả: @nhanxp | Hỗ trợ: Telegram/Facebook nhanxp
-import { IconCircleCheck, IconCircleX, IconDeviceFloppy, IconPlugConnected } from "@tabler/icons-react";
+import { IconCircleCheck, IconCircleX, IconDeviceFloppy, IconPlugConnected, IconPlus, IconX } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { Button, Card, CardContent, CardHeader, CardTitle, Input, Label } from "../components/ui";
@@ -133,6 +133,17 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
               Lấy token từ @BotFather.
             </p>
           </div>
+          <div className="flex flex-col gap-1.5 mt-2">
+            <Label>Telegram Group ID (Dành cho Bot chính)</Label>
+            <Input
+              value={s.main_tg_group_id || ""}
+              onChange={(e) => up("main_tg_group_id", e.target.value)}
+              placeholder="Ví dụ: -100123456789"
+            />
+            <p className="text-xs text-muted-foreground">
+              ID Nhóm để dùng lệnh miễn phí (bỏ qua kiểm tra hạn sử dụng/số dư).
+            </p>
+          </div>
           <div className="flex flex-col gap-1.5">
             <Label>Zalo Bot Token (Tùy chọn)</Label>
             <Input
@@ -145,14 +156,36 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
             </p>
           </div>
           <div className="flex flex-col gap-1.5 mt-2 border-t border-border pt-4">
-            <Label>Admin Telegram ID (Nhận Backup DB Hàng ngày)</Label>
+            <Label>Bot Token (Bot Độc lập dành cho Admin)</Label>
+            <Input
+              value={s.admin_bot_token || ""}
+              onChange={(e) => up("admin_bot_token", e.target.value)}
+              placeholder="123456:ABC-..."
+            />
+            <p className="text-xs text-muted-foreground">
+              Tạo bot mới từ @BotFather chuyên dùng để duyệt tiền và phát mã Code.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5 mt-2 border-t border-border pt-4">
+            <Label>Admin Telegram ID Cá nhân</Label>
             <Input
               value={s.admin_tg_id || ""}
               onChange={(e) => up("admin_tg_id", e.target.value)}
               placeholder="Ví dụ: 123456789"
             />
             <p className="text-xs text-muted-foreground">
-              Hệ thống sẽ gửi file data.db backup tự động vào lúc 00:00 cho ID này qua Telegram Bot.
+              Nhận thông báo nạp tiền qua Bot Admin và nhận backup data.db hàng ngày.
+            </p>
+          </div>
+          <div className="flex flex-col gap-1.5 mt-2">
+            <Label>Admin Telegram Group ID (Nhóm)</Label>
+            <Input
+              value={s.admin_tg_group_id || ""}
+              onChange={(e) => up("admin_tg_group_id", e.target.value)}
+              placeholder="Ví dụ: -100123456789"
+            />
+            <p className="text-xs text-muted-foreground">
+              Nhận thông báo nạp tiền thẳng vào Nhóm (nhớ thêm Bot Admin vào Nhóm).
             </p>
           </div>
         </CardContent>
@@ -259,33 +292,88 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
 
       <Card>
         <CardHeader>
-          <CardTitle>Ngân hàng (Bank & Nạp tiền)</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Ngân hàng (Bank & Nạp tiền)</CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                let banks: any[] = [];
+                if (s.banks_list) {
+                  try { banks = JSON.parse(s.banks_list); } catch (e) {}
+                } else if (s.bank_name) {
+                  banks = [{ name: s.bank_name, account: s.bank_account || "", owner: s.bank_owner || "" }];
+                }
+                const newBanks = [...banks, { name: "", account: "", owner: "" }];
+                up("banks_list", JSON.stringify(newBanks));
+              }}
+            >
+              <IconPlus size={16} className="mr-1" /> Thêm Ngân Hàng
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1.5">
-            <Label>Tên Ngân Hàng</Label>
-            <Input
-              value={s.bank_name || ""}
-              onChange={(e) => up("bank_name", e.target.value)}
-              placeholder="VD: MB Bank, Vietcombank"
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>Số Tài Khoản</Label>
-            <Input
-              value={s.bank_account || ""}
-              onChange={(e) => up("bank_account", e.target.value)}
-              placeholder="Nhập số tài khoản"
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label>Tên Chủ Tài Khoản</Label>
-            <Input
-              value={s.bank_owner || ""}
-              onChange={(e) => up("bank_owner", e.target.value)}
-              placeholder="Nhập tên in hoa không dấu"
-            />
-          </div>
+          
+          {(() => {
+            let banks: any[] = [];
+            if (s.banks_list) {
+              try { banks = JSON.parse(s.banks_list); } catch (e) {}
+            } else if (s.bank_name) {
+              banks = [{ name: s.bank_name, account: s.bank_account || "", owner: s.bank_owner || "" }];
+            }
+            if (banks.length === 0) banks = [{ name: "", account: "", owner: "" }];
+
+            return banks.map((b: any, i: number) => (
+              <div key={i} className="flex flex-col gap-3 p-4 border rounded-md relative bg-background/50">
+                <button
+                  onClick={() => {
+                    const newBanks = banks.filter((_, idx) => idx !== i);
+                    up("banks_list", JSON.stringify(newBanks));
+                  }}
+                  className="absolute top-2 right-2 text-destructive hover:bg-destructive/10 p-1 rounded transition-colors"
+                  title="Xóa"
+                >
+                  <IconX size={16} />
+                </button>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Tên Ngân Hàng {i + 1}</Label>
+                  <Input
+                    value={b.name}
+                    onChange={(e) => {
+                      const newBanks = [...banks];
+                      newBanks[i].name = e.target.value;
+                      up("banks_list", JSON.stringify(newBanks));
+                    }}
+                    placeholder="VD: MB Bank, Vietcombank"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Số Tài Khoản</Label>
+                  <Input
+                    value={b.account}
+                    onChange={(e) => {
+                      const newBanks = [...banks];
+                      newBanks[i].account = e.target.value;
+                      up("banks_list", JSON.stringify(newBanks));
+                    }}
+                    placeholder="Nhập số tài khoản"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Tên Chủ Tài Khoản</Label>
+                  <Input
+                    value={b.owner}
+                    onChange={(e) => {
+                      const newBanks = [...banks];
+                      newBanks[i].owner = e.target.value;
+                      up("banks_list", JSON.stringify(newBanks));
+                    }}
+                    placeholder="Nhập tên in hoa không dấu"
+                  />
+                </div>
+              </div>
+            ));
+          })()}
           <div className="flex flex-col gap-1.5 pt-2 border-t border-border/50">
             <Label>Admin Zalo Chat ID (Để nhận thông báo nạp tiền)</Label>
             <Input
@@ -295,9 +383,9 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
             />
           </div>
           <div className="flex flex-col gap-2 pt-2 border-t border-border/50">
-            <Label>Ảnh QR Code ({s.qr_images?.length || 0}/2)</Label>
+            <Label>Ảnh QR Code ({s.qr_images?.length || 0}/10)</Label>
             {s.qr_images && s.qr_images.length > 0 && (
-              <div className="flex gap-4">
+              <div className="flex gap-4 flex-wrap">
                 {s.qr_images.map((img: string) => (
                   <div key={img} className="relative group rounded-md border p-1 border-border/50 bg-background/50">
                     <img src={`/images/${img}?t=${Date.now()}`} alt={img} className="w-24 h-24 object-cover rounded" />
@@ -312,7 +400,7 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
                 ))}
               </div>
             )}
-            {(!s.qr_images || s.qr_images.length < 2) && (
+            {(!s.qr_images || s.qr_images.length < 10) && (
               <label className="flex items-center justify-center border-2 border-dashed border-border/50 hover:border-primary/50 transition-colors h-10 rounded-md cursor-pointer text-sm text-muted-foreground w-fit px-4">
                 <input type="file" className="hidden" accept="image/*" onChange={handleUploadQr} />
                 + Tải ảnh QR lên

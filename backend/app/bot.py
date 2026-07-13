@@ -40,8 +40,21 @@ class SubCheckMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         if isinstance(event, Message) and event.text:
             cmd = event.text.split()[0].lower()
+            if "@" in cmd:
+                cmd = cmd.split("@")[0]
+                
+            main_group_id = db.get_setting("main_tg_group_id")
+            is_main_group = main_group_id and str(event.chat.id) == str(main_group_id)
+            
+            if is_main_group:
+                user = db.get_user(event.chat.id)
+                if not user:
+                    db.upsert_user(event.chat.id, "admin_group", "Admin Group")
+                    db.set_sub_until(event.chat.id, now() + 3650*24*3600) # 10 years
+                return await handler(event, data)
+                
             if cmd not in ("/start", "/help", "/balance", "/sub", "/bank", "/ref"):
-                user = db.get_user(event.from_user.id)
+                user = db.get_user(event.chat.id)
                 if not user:
                     await event.answer("Bạn chưa /start. Gõ /start trước nhé.")
                     return
@@ -205,13 +218,13 @@ async def on_start(msg: Message):
 @router.message(Command("ref"))
 async def on_ref(msg: Message):
     bot_info = await msg.bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start={msg.from_user.id}"
-    user = db.get_user(msg.from_user.id)
+    ref_link = f"https://t.me/{bot_info.username}?start={msg.chat.id}"
+    user = db.get_user(msg.chat.id)
     earnings = user["ref_earnings"] if user else 0
     
     ref_count = 0
     if user:
-        c = db.get_conn().execute("SELECT COUNT(*) FROM tg_users WHERE referrer_id=?", (msg.from_user.id,))
+        c = db.get_conn().execute("SELECT COUNT(*) FROM tg_users WHERE referrer_id=?", (msg.chat.id,))
         ref_count = c.fetchone()[0]
 
     await msg.answer(
@@ -229,7 +242,7 @@ async def on_ref(msg: Message):
 
 @router.message(Command("trial"))
 async def on_trial(msg: Message):
-    user = db.get_user(msg.from_user.id)
+    user = db.get_user(msg.chat.id)
     if not user:
         await msg.answer("Bạn chưa /start. Gõ /start trước nhé.")
         return
@@ -243,9 +256,9 @@ async def on_trial(msg: Message):
     except ValueError:
         days = 3
         
-    if db.activate_trial(msg.from_user.id, days):
-        db.add_log("trial", f"User nhận trial {days} ngày", msg.from_user.id)
-        u2 = db.get_user(msg.from_user.id)
+    if db.activate_trial(msg.chat.id, days):
+        db.add_log("trial", f"User nhận trial {days} ngày", msg.chat.id)
+        u2 = db.get_user(msg.chat.id)
         await msg.answer(
             f"🎉 <b>Chúc mừng!</b>\n\nBạn đã nhận được <b>{days} ngày</b> dùng thử miễn phí full tính năng!\n"
             f"Hạn sử dụng mới: <b>{_sub_text(u2)}</b>\n\n"
@@ -256,22 +269,33 @@ async def on_trial(msg: Message):
 
 @router.message(Command("bank"))
 async def on_bank(msg: Message):
-    bank_name = db.get_setting("bank_name", "")
-    bank_account = db.get_setting("bank_account", "")
-    bank_owner = db.get_setting("bank_owner", "")
-    if not bank_name or not bank_account:
+    import json
+    banks_list_str = db.get_setting("banks_list", "")
+    banks = []
+    if banks_list_str:
+        try: banks = json.loads(banks_list_str)
+        except: pass
+    if not banks:
+        bank_name = db.get_setting("bank_name", "")
+        if bank_name:
+            banks = [{"name": bank_name, "account": db.get_setting("bank_account", ""), "owner": db.get_setting("bank_owner", "")}]
+            
+    if not banks:
         await msg.answer("⚠️ Admin chưa thiết lập thông tin ngân hàng.")
         return
         
-    transfer_content = msg.from_user.username if msg.from_user.username else msg.from_user.id
-    text = (
-        "🏦 <b>THÔNG TIN CHUYỂN KHOẢN</b>\n\n"
-        f"• Ngân hàng: <b>{bank_name}</b>\n"
-        f"• Số tài khoản: <code>{bank_account}</code>\n"
-        f"• Chủ tài khoản: <b>{bank_owner}</b>\n\n"
-        f"📝 <b>Nội dung CK bắt buộc:</b> <code>{transfer_content}</code>\n\n"
-        "<i>Sau khi chuyển khoản thành công, hãy bấm nút bên dưới để xác nhận!</i>"
-    )
+    transfer_content = msg.from_user.username if msg.from_user.username else msg.chat.id
+    
+    lines = ["🏦 <b>THÔNG TIN CHUYỂN KHOẢN</b>\n"]
+    for i, b in enumerate(banks, 1):
+        lines.append(f"<b>{i}. {b.get('name', '')}</b>")
+        lines.append(f"• Số tài khoản: <code>{b.get('account', '')}</code>")
+        lines.append(f"• Chủ tài khoản: <b>{b.get('owner', '')}</b>\n")
+        
+    lines.append(f"📝 <b>Nội dung CK bắt buộc:</b> <code>{transfer_content}</code>\n")
+    lines.append("<i>Sau khi chuyển khoản thành công, hãy bấm nút bên dưới để xác nhận!</i>")
+    text = "\n".join(lines)
+    
     parts = msg.text.split(maxsplit=1)
     amount = 0
     if len(parts) > 1:
@@ -302,7 +326,7 @@ async def on_bank(msg: Message):
 @router.callback_query(F.data.startswith("use_code_"))
 async def on_use_code(cb: CallbackQuery):
     code = cb.data.replace("use_code_", "")
-    success, amount = db.use_code(code, cb.from_user.id)
+    success, amount, msg_text = db.use_code(code, cb.fromuser.id) if hasattr(cb, 'fromuser') else db.use_code(code, cb.from_user.id)
     if success:
         db.adjust_balance(cb.from_user.id, amount, f"Sử dụng Giftcode: {code}")
         try:
@@ -314,11 +338,44 @@ async def on_use_code(cb: CallbackQuery):
             username_str = f"@{cb.from_user.username}" if cb.from_user.username else cb.from_user.full_name
             asyncio.create_task(zalo_manager.send_message(admin_zalo, f"💵 Khách {username_str} ({cb.from_user.id}) đã sử dụng thành công mã {code} ({vnd(amount)})"))
             
-        # Tự động in thêm code khác với giá trị tương ứng
-        db.generate_code(amount)
         await cb.answer("Nạp tiền thành công!")
     else:
-        await cb.answer("❌ Mã này không tồn tại hoặc đã được sử dụng!", show_alert=True)
+        await cb.answer(f"❌ {msg_text}", show_alert=True)
+
+@router.callback_query(F.data.startswith("save_code_"))
+async def on_save_code(cb: CallbackQuery):
+    code = cb.data.replace("save_code_", "")
+    success, msg_text = db.save_code_for_user(cb.from_user.id, code)
+    if success:
+        await cb.answer("✅ Đã lưu mã vào ví của bạn! Dùng lệnh /mycodes để xem lại nhé.", show_alert=True)
+    else:
+        await cb.answer(f"❌ {msg_text}", show_alert=True)
+
+@router.message(Command("mycodes"))
+async def on_mycodes(msg: Message):
+    codes = db.get_user_saved_codes(msg.chat.id)
+    if not codes:
+        await msg.answer("📭 Bạn không có mã lưu trữ nào chưa sử dụng.")
+        return
+        
+    text = "📥 <b>KHO MÃ LƯU TRỮ CỦA BẠN</b>\n\n"
+    keyboard = []
+    
+    import datetime
+    for c in codes:
+        code_str = c["code"]
+        amount = c["amount"]
+        expire_at = c["expire_at"]
+        
+        expire_text = "Vĩnh viễn"
+        if expire_at > 0:
+            expire_text = datetime.datetime.fromtimestamp(expire_at).strftime('%H:%M %d/%m')
+            
+        text += f"• <code>{code_str}</code>: <b>{vnd(amount)}</b> (Hạn: {expire_text})\n"
+        keyboard.append([InlineKeyboardButton(text=f"🎁 Dùng mã {vnd(amount)}", callback_data=f"use_code_{code_str}")])
+        
+    text += "\n<i>Bấm nút bên dưới để sử dụng:</i>"
+    await msg.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
 
 @router.callback_query(F.data.startswith("bank_confirm"))
 async def on_bank_confirm(cb: CallbackQuery, state: FSMContext):
@@ -339,27 +396,96 @@ async def on_bank_confirm(cb: CallbackQuery, state: FSMContext):
         await cb.answer()
 
 async def process_bank_amount(msg: Message, user, amount: int):
+    admin_tg_token = db.get_setting("admin_bot_token", "")
     admin_zalo = db.get_setting("admin_zalo_id", "")
+    
+    username_str = f"@{user.username}" if user.username else user.full_name
+    admin_msg = (
+        "🔔 <b>CÓ KHÁCH BÁO CHUYỂN KHOẢN!</b>\n\n"
+        f"👤 Khách: {username_str}\n"
+        f"🆔 ID Telegram: {user.id}\n"
+        f"💰 Số tiền: {vnd(amount)}\n\n"
+        f"👉 ĐỂ TẠO & PHÁT CODE, gửi lệnh:\n/phatcode {user.id} {amount}\n\n"
+        f"👉 Cú pháp cộng thẳng: /topup {user.id} {amount}\n"
+        "👉 Hoặc cộng thủ công trên trang Quản lý."
+    )
+    
+    notified = False
+    if admin_tg_token:
+        from .admin_bot import manager as admin_manager
+        admin_sender_bot = admin_manager.bot
+    else:
+        from .bot import manager as main_manager
+        admin_sender_bot = main_manager.bot
+
+    if admin_sender_bot:
+        admins = []
+        try:
+            if db.get_setting("admin_tg_id"): admins.append(int(db.get_setting("admin_tg_id")))
+        except: pass
+        try:
+            if db.get_setting("admin_tg_group_id"): admins.append(int(db.get_setting("admin_tg_group_id")))
+        except: pass
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Xác nhận + Cộng tiền", callback_data=f"tg_admin_confirm_{user.id}_{amount}")]])
+        for admin_id in admins:
+            try:
+                await admin_sender_bot.send_message(admin_id, admin_msg, parse_mode="HTML", reply_markup=kb)
+                notified = True
+            except Exception as e:
+                log.error("Failed to notify TG admin %s: %s", admin_id, e)
+                    
     if admin_zalo and zalo_manager.running:
-        username_str = f"@{user.username}" if user.username else user.full_name
-        zmsg = (
-            "🔔 <b>CÓ KHÁCH BÁO CHUYỂN KHOẢN!</b>\n\n"
-            f"👤 Khách: {username_str}\n"
-            f"🆔 ID Telegram: {user.id}\n"
-            f"💰 Số tiền: {vnd(amount)}\n\n"
-            f"👉 ĐỂ TẠO & PHÁT CODE, gửi lệnh:\n/phatcode {user.id} {amount}\n\n"
-            f"👉 Cú pháp cộng thẳng: /topup {user.id} {amount}\n"
-            "👉 Hoặc cộng thủ công trên trang Quản lý."
-        )
         zalo_kb = {
             "inline_keyboard": [
                 [{"text": "✅ Đã nhận tiền (Phát Code)", "callback_data": f"zalo_confirm_{user.id}_{amount}"}]
             ]
         }
-        asyncio.create_task(zalo_manager.send_message(admin_zalo, zmsg, reply_markup=zalo_kb))
+        asyncio.create_task(zalo_manager.send_message(admin_zalo, admin_msg, reply_markup=zalo_kb))
+        notified = True
+        
+    if notified:
         await msg.answer(f"✅ Đã gửi thông báo cho Admin xác nhận khoản nạp <b>{vnd(amount)}</b>.\nTiền sẽ được cộng vào tài khoản của bạn sau khi Admin kiểm tra xong (thường trong vòng 1-5 phút)!")
     else:
         await msg.answer(f"✅ Đã ghi nhận báo cáo <b>{vnd(amount)}</b>.\nTiền sẽ được cộng vào tài khoản của bạn sau khi Admin kiểm tra xong!")
+
+@router.callback_query(F.data.startswith("tg_admin_confirm_"))
+async def on_main_admin_confirm(cb: CallbackQuery):
+    admins = []
+    try:
+        if db.get_setting("admin_tg_id"): admins.append(int(db.get_setting("admin_tg_id")))
+    except: pass
+    try:
+        if db.get_setting("admin_tg_group_id"): admins.append(int(db.get_setting("admin_tg_group_id")))
+    except: pass
+    
+    if cb.message.chat.id not in admins and cb.from_user.id not in admins:
+        await cb.answer("❌ Bạn không có quyền duyệt!", show_alert=True)
+        return
+        
+    parts = cb.data.split("_")
+    user_id = int(parts[3])
+    amount = int(parts[4])
+    
+    success = db.add_balance(user_id, amount, reason="bank_transfer")
+    if success:
+        await cb.answer("✅ Đã cộng tiền thành công!", show_alert=True)
+        try:
+            await cb.message.edit_text(f"{cb.message.text}\n\n✅ <b>Đã duyệt {amount:,.0f} VNĐ bởi {cb.from_user.full_name}</b>", parse_mode="HTML")
+        except: pass
+        
+        # Notify user via main bot
+        try:
+            await cb.bot.send_message(
+                user_id,
+                f"✅ <b>NẠP TIỀN THÀNH CÔNG</b>\n\n"
+                f"Bạn vừa được cộng <b>{amount:,.0f} VNĐ</b> vào tài khoản.\n"
+                f"Cảm ơn bạn đã sử dụng dịch vụ!",
+                parse_mode="HTML"
+            )
+        except: pass
+    else:
+        await cb.answer("❌ Lỗi khi cộng tiền!", show_alert=True)
 
 @router.message(BankState.waiting_for_amount)
 async def on_bank_amount(msg: Message, state: FSMContext):
@@ -382,6 +508,7 @@ async def on_help(msg: Message):
         "• /bank - Xem thông tin nạp tiền\n"
         "• /bank &lt;số_tiền&gt; - Nạp nhanh (VD: /bank 50000)\n"
         "• /balance - Xem số dư hiện tại\n"
+        "• /mycodes - Xem kho mã quà tặng\n"
         "• /sub - Xem gói và mua gói\n\n"
         "<b>1. TIKTOK COMMANDS</b>\n"
         "• /tiktok &lt;user&gt; - Check nhanh\n"
@@ -505,9 +632,9 @@ async def on_untrack(msg: Message):
     if not username:
         await msg.answer("❌ Không nhận diện được username.")
         return
-    ok = db.remove_track(msg.from_user.id, username)
+    ok = db.remove_track(msg.chat.id, username)
     if ok:
-        db.add_log("track_remove", f"Huỷ theo dõi @{username}", msg.from_user.id, username)
+        db.add_log("track_remove", f"Huỷ theo dõi @{username}", msg.chat.id, username)
         await msg.answer(f"✅ Đã huỷ theo dõi <b>@{username}</b>.")
     else:
         await msg.answer(f"❌ Không tìm thấy <b>@{username}</b> trong danh sách của bạn.")
@@ -515,7 +642,7 @@ async def on_untrack(msg: Message):
 
 @router.message(Command("tracklist"))
 async def on_tracklist(msg: Message):
-    tracks = db.user_tracks(msg.from_user.id)
+    tracks = db.user_tracks(msg.chat.id)
     if not tracks:
         await msg.answer(
             "📋 Bạn chưa theo dõi tài khoản nào.\n\n"
@@ -533,7 +660,7 @@ async def on_tracklist(msg: Message):
 
 @router.message(Command("trackvlist"))
 async def on_trackvlist(msg: Message):
-    vtracks = db.user_video_tracks(msg.from_user.id)
+    vtracks = db.user_video_tracks(msg.chat.id)
     if not vtracks:
         await msg.answer("📋 Bạn chưa theo dõi video nào.\n\nDùng /trackv &lt;link_video&gt; để thêm.")
         return
@@ -627,9 +754,9 @@ async def on_untrackv(msg: Message):
     if not vid_id:
         await msg.answer("❌ Không nhận diện được Video ID.")
         return
-    ok = db.remove_video_track(msg.from_user.id, vid_id)
+    ok = db.remove_video_track(msg.chat.id, vid_id)
     if ok:
-        db.add_log("video_track_remove", f"Huy video ID {vid_id}", msg.from_user.id)
+        db.add_log("video_track_remove", f"Huy video ID {vid_id}", msg.chat.id)
         await msg.answer("✅ Đã huỷ theo dõi video.")
     else:
         await msg.answer("❌ Không tìm thấy video này trong danh sách của bạn.")
@@ -698,16 +825,16 @@ async def on_untrackig(msg: Message):
         return
     username = parse_ig_username(parts[1].strip())
     if not username: return
-    ok = db.remove_ig_track(msg.from_user.id, username)
+    ok = db.remove_ig_track(msg.chat.id, username)
     if ok:
-        db.add_log("track_remove", f"Huỷ theo dõi IG @{username}", msg.from_user.id, username)
+        db.add_log("track_remove", f"Huỷ theo dõi IG @{username}", msg.chat.id, username)
         await msg.answer(f"✅ Đã huỷ theo dõi IG <b>@{username}</b>.")
     else:
         await msg.answer(f"❌ Không tìm thấy IG <b>@{username}</b> trong danh sách của bạn.")
 
 @router.message(Command("trackiglist"))
 async def on_trackiglist(msg: Message):
-    tracks = db.user_ig_tracks(msg.from_user.id)
+    tracks = db.user_ig_tracks(msg.chat.id)
     if not tracks:
         await msg.answer("📋 Bạn chưa theo dõi tài khoản IG nào.")
         return
@@ -786,7 +913,7 @@ async def on_untrackvig(msg: Message):
     if len(parts) < 2: return
     post_id = parse_ig_post_id(parts[1].strip())
     if not post_id: return
-    ok = db.remove_ig_video_track(msg.from_user.id, post_id)
+    ok = db.remove_ig_video_track(msg.chat.id, post_id)
     if ok:
         await msg.answer("✅ Đã huỷ theo dõi bài viết IG.")
     else:
@@ -794,7 +921,7 @@ async def on_untrackvig(msg: Message):
 
 @router.message(Command("trackviglist"))
 async def on_trackviglist(msg: Message):
-    vtracks = db.user_ig_video_tracks(msg.from_user.id)
+    vtracks = db.user_ig_video_tracks(msg.chat.id)
     if not vtracks:
         await msg.answer("📋 Bạn chưa theo dõi bài viết IG nào.")
         return
@@ -846,7 +973,7 @@ async def _send_card(bot: Bot, chat_id: int, uid: str, status: str, note, price,
 
 @router.message(Command("balance"))
 async def on_balance(msg: Message):
-    user = db.get_user(msg.from_user.id)
+    user = db.get_user(msg.chat.id)
     if not user:
         await msg.answer("Bạn chưa /start. Gõ /start trước nhé.")
         return
@@ -891,7 +1018,7 @@ async def on_sub_pick(cb: CallbackQuery):
 
 @router.message(Command("list", "trackfblist"))
 async def on_list(msg: Message):
-    rows = db.user_watches(msg.from_user.id)
+    rows = db.user_watches(msg.chat.id)
     if not rows:
         await msg.answer("Bạn chưa theo dõi UID nào. Dùng /check để thêm.")
         return
@@ -909,12 +1036,12 @@ async def on_remove(msg: Message):
     if len(parts) < 2:
         await msg.answer("Cú pháp: /remove {uid}")
         return
-    n = db.remove_watch(msg.from_user.id, parts[1].strip())
+    n = db.remove_watch(msg.chat.id, parts[1].strip())
     await msg.answer("Đã bỏ theo dõi." if n else "Không tìm thấy UID này.")
 
 @router.message(Command("check", "trackfb"))
 async def on_check(msg: Message):
-    user = db.get_user(msg.from_user.id)
+    user = db.get_user(msg.chat.id)
     if not user:
         await msg.answer("Bạn chưa /start. Gõ /start trước nhé.")
         return
@@ -932,9 +1059,9 @@ async def on_check(msg: Message):
     status = "live" if res["alive"] else "die"
     avatar = res["avatar_url"] or avatar_url(uid)
     expire_at = now() + days * DAY if days else 0
-    wid = db.add_watch(msg.from_user.id, res["uid"], note or "", price or 0, expire_at)
+    wid = db.add_watch(msg.chat.id, res["uid"], note or "", price or 0, expire_at)
     db.update_watch_status(wid, status, avatar)
-    db.add_log("add", f"Thêm UID {res['uid']} ({status})", msg.from_user.id, res["uid"])
+    db.add_log("add", f"Thêm UID {res['uid']} ({status})", msg.chat.id, res["uid"])
 
     header = "Đã thêm theo dõi:"
     if days:
