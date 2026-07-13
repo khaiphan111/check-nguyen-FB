@@ -123,6 +123,32 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
+            <Label>Proxy Provider API URL (Tự động thuê)</Label>
+            <Input
+              value={s.proxy_api_url || ""}
+              onChange={(e) => up("proxy_api_url", e.target.value)}
+              placeholder="VD: https://tmproxy.com/api/proxy/get-new-proxy"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Proxy API Key</Label>
+            <Input
+              value={s.proxy_api_key || ""}
+              onChange={(e) => up("proxy_api_key", e.target.value)}
+              placeholder="Nhập API Key"
+              type="password"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Số lượng Proxy sống tối thiểu (Min Active)</Label>
+            <Input
+              type="number"
+              value={s.min_active_proxies || ""}
+              onChange={(e) => up("min_active_proxies", e.target.value)}
+              placeholder="VD: 5"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
             <Label>Bot Token Telegram</Label>
             <Input
               value={s.bot_token || ""}
@@ -258,6 +284,113 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
               onChange={(e) => up("ig_session_cookie", e.target.value)}
               placeholder="sessionid=..."
             />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Cấu hình VIP & Giới hạn</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label>Lượt check ngày (Free - VIP 0)</Label>
+            <Input type="number" value={s.vip0_daily_check || ""} onChange={(e) => up("vip0_daily_check", e.target.value)} placeholder="Mặc định: 5" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Lượt check ngày (VIP 1)</Label>
+            <Input type="number" value={s.vip1_daily_check || ""} onChange={(e) => up("vip1_daily_check", e.target.value)} placeholder="Mặc định: 50" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Lượt check ngày (VIP 2)</Label>
+            <Input type="number" value={s.vip2_daily_check || ""} onChange={(e) => up("vip2_daily_check", e.target.value)} placeholder="Mặc định: 200" />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Lượt check ngày (VIP 3)</Label>
+            <Input type="number" value={s.vip3_daily_check || ""} onChange={(e) => up("vip3_daily_check", e.target.value)} placeholder="Mặc định: 1000" />
+          </div>
+          
+          <div className="flex flex-col gap-1.5">
+            <Label>Giới hạn theo dõi VIP 0 (Mặc định)</Label>
+            <Input
+              type="number"
+              value={s.vip0_limit || ""}
+              onChange={(e) => up("vip0_limit", e.target.value)}
+              placeholder="Ví dụ: 10"
+            />
+            <p className="text-xs text-muted-foreground">Số lượng theo dõi tối đa (FB/IG/Tiktok) cho user thường.</p>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Giới hạn VIP 1</Label>
+            <Input
+              type="number"
+              value={s.vip1_limit || ""}
+              onChange={(e) => up("vip1_limit", e.target.value)}
+              placeholder="Ví dụ: 50"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Giới hạn VIP 2</Label>
+            <Input
+              type="number"
+              value={s.vip2_limit || ""}
+              onChange={(e) => up("vip2_limit", e.target.value)}
+              placeholder="Ví dụ: 200"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Giới hạn VIP 3 (Max)</Label>
+            <Input
+              type="number"
+              value={s.vip3_limit || ""}
+              onChange={(e) => up("vip3_limit", e.target.value)}
+              placeholder="Ví dụ: 1000"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Bảng giá nâng cấp VIP tự động (Tổng nạp)</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label>Mốc nạp lên VIP 1</Label>
+            <Input
+              type="number"
+              value={s.vip1_price || ""}
+              onChange={(e) => up("vip1_price", e.target.value)}
+              placeholder="Ví dụ: 50000"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Mốc nạp lên VIP 2</Label>
+            <Input
+              type="number"
+              value={s.vip2_price || ""}
+              onChange={(e) => up("vip2_price", e.target.value)}
+              placeholder="Ví dụ: 200000"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Mốc nạp lên VIP 3</Label>
+            <Input
+              type="number"
+              value={s.vip3_price || ""}
+              onChange={(e) => up("vip3_price", e.target.value)}
+              placeholder="Ví dụ: 500000"
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label>Mốc nạp sử dụng Vĩnh Viễn</Label>
+            <Input
+              type="number"
+              value={s.vip_lifetime_price || ""}
+              onChange={(e) => up("vip_lifetime_price", e.target.value)}
+              placeholder="Ví dụ: 2000000"
+            />
+            <p className="text-xs text-muted-foreground">Khi đạt mốc này, khách sẽ được sử dụng vô thời hạn.</p>
           </div>
         </CardContent>
       </Card>

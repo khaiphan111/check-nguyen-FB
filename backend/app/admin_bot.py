@@ -43,6 +43,18 @@ def parse_time_str(time_str: str) -> int:
         
     return total_seconds
 
+@router.message(Command("help"))
+async def cmd_help(msg: Message):
+    if not is_admin(msg.chat.id, msg.from_user.id):
+        return
+    help_text = (
+        "🛠 <b>DANH SÁCH LỆNH ADMIN</b>\n\n"
+        "• /phatcode &lt;số_tiền&gt; [số_lượt] [hạn_sử_dụng]\n  👉 <i>Tạo mã quà tặng chung.</i>\n\n"
+        "• /phatcodeall &lt;số_tiền&gt; [hạn_sử_dụng]\n  👉 <i>Phát mã và gửi thông báo cho <b>toàn bộ user</b> trong hệ thống.</i>\n\n"
+        "• /help - Xem danh sách lệnh này."
+    )
+    await msg.answer(help_text, parse_mode="HTML")
+
 @router.message(Command("phatcode"))
 async def cmd_phatcode(msg: Message):
     if not is_admin(msg.chat.id, msg.from_user.id):
@@ -184,7 +196,12 @@ async def on_admin_confirm(cb: CallbackQuery):
     user_id = int(parts[3])
     amount = int(parts[4])
     
-    success = db.add_balance(user_id, amount, reason="bank_transfer")
+    try:
+        db.adjust_balance(user_id, amount, reason="bank_transfer")
+        success = True
+    except Exception as e:
+        log.error(f"Lỗi cộng tiền: {e}")
+        success = False
     if success:
         await cb.answer("✅ Đã cộng tiền thành công!", show_alert=True)
         try:
@@ -195,13 +212,28 @@ async def on_admin_confirm(cb: CallbackQuery):
         from .bot import manager as main_bot_manager
         if main_bot_manager.bot:
             try:
-                await main_bot_manager.bot.send_message(
-                    user_id,
+                # Kiem tra VIP upgrade
+                upgraded, new_vip, is_lifetime = db.check_vip_upgrade(user_id)
+                msg_text = (
                     f"✅ <b>NẠP TIỀN THÀNH CÔNG</b>\n\n"
                     f"Bạn vừa được cộng <b>{amount:,.0f} VNĐ</b> vào tài khoản.\n"
-                    f"Cảm ơn bạn đã sử dụng dịch vụ!",
-                    parse_mode="HTML"
+                    f"Cảm ơn bạn đã sử dụng dịch vụ!"
                 )
+                await main_bot_manager.bot.send_message(user_id, msg_text, parse_mode="HTML")
+                
+                if upgraded or is_lifetime:
+                    limit = db.get_setting(f"vip{new_vip}_limit", "10")
+                    vip_msg = (
+                        f"🎉 <b>CHÚC MỪNG BẠN ĐÃ LÊN VIP {new_vip}!</b> 🎉\n\n"
+                        f"💎 <b>Quyền lợi mới:</b>\n"
+                        f"- Theo dõi tối đa: <b>{limit} UID/Kênh</b>\n"
+                    )
+                    if is_lifetime:
+                        vip_msg += "- Hạn sử dụng: <b>VĨNH VIỄN</b>\n\n"
+                    else:
+                        vip_msg += "\n"
+                    vip_msg += "Cảm ơn bạn đã tin tưởng và sử dụng dịch vụ của chúng tôi! ❤️"
+                    await main_bot_manager.bot.send_message(user_id, vip_msg, parse_mode="HTML")
             except: pass
     else:
         await cb.answer("❌ Lỗi khi cộng tiền!", show_alert=True)

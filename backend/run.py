@@ -34,5 +34,5 @@ def _open():
 
 if __name__ == "__main__":
     print(f"{APP_NAME} v{APP_VERSION} - http://{HOST}:{PORT}")
-    threading.Timer(1.5, _open).start()
+    threading.Timer(4.0, _open).start()
     uvicorn.run(app, host=HOST, port=PORT, log_level="info")

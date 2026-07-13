@@ -52,12 +52,19 @@ def _extract_page_data(html: str) -> dict:
 
 
 async def _get_html(url: str) -> str:
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=20) as client:
-        resp = await client.get(url)
-        if resp.status_code == 404:
-            raise ValueError(f"Khong tim thay: {url}")
-        resp.raise_for_status()
-        return resp.text
+    from . import db
+    proxy = db.get_random_proxy()
+    try:
+        async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, timeout=20, proxy=proxy) as client:
+            resp = await client.get(url)
+            if resp.status_code == 404:
+                raise ValueError(f"Khong tim thay: {url}")
+            resp.raise_for_status()
+            return resp.text
+    except Exception as e:
+        if proxy:
+            db.mark_proxy_failed(proxy)
+        raise e
 
 
 # ─── FETCH USER INFO ──────────────────────────────────────────

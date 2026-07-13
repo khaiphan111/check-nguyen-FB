@@ -50,6 +50,21 @@ class SettingsIn(BaseModel):
     admin_tg_id: str | None = None
     admin_tg_group_id: str | None = None
     main_tg_group_id: str | None = None
+    vip0_limit: str | None = None
+    vip1_limit: str | None = None
+    vip2_limit: str | None = None
+    vip3_limit: str | None = None
+    vip1_price: str | None = None
+    vip2_price: str | None = None
+    vip3_price: str | None = None
+    vip_lifetime_price: str | None = None
+    proxy_api_url: str | None = None
+    proxy_api_key: str | None = None
+    min_active_proxies: str | None = None
+    vip0_daily_check: str | None = None
+    vip1_daily_check: str | None = None
+    vip2_daily_check: str | None = None
+    vip3_daily_check: str | None = None
 
 
 class TokenIn(BaseModel):
@@ -79,6 +94,62 @@ def login(body: LoginIn):
     tok = secrets.token_hex(24)
     _tokens.add(tok)
     return {"ok": True, "token": tok}
+
+_user_tokens = {}
+
+def user_auth(authorization: str = Header(default="")):
+    token = authorization.replace("Bearer ", "").strip()
+    if token not in _user_tokens:
+        raise HTTPException(status_code=401, detail="User unauthorized")
+    return _user_tokens[token]
+
+@router.post("/user/login")
+def user_login(body: TokenIn):
+    tg_id = db.verify_magic_link(body.token)
+    if not tg_id:
+        raise HTTPException(status_code=401, detail="Token hết hạn hoặc không hợp lệ")
+    
+    # Check if user exists
+    user = db.get_user(tg_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Không tìm thấy người dùng")
+        
+    tok = "user-" + secrets.token_hex(24)
+    _user_tokens[tok] = tg_id
+    return {"ok": True, "token": tok, "user": dict(user)}
+
+@router.get("/user/me")
+def user_me(tg_id: int = Depends(user_auth)):
+    user = db.get_user(tg_id)
+    return dict(user) if user else {}
+
+@router.get("/user/analytics")
+def user_analytics(tg_id: int = Depends(user_auth)):
+    watches = db.all_watches()
+    user_watches = [w for w in watches if w["tg_id"] == tg_id]
+    
+    # Just basic counts for now
+    live = sum(1 for w in user_watches if w["last_status"] == "live")
+    die = sum(1 for w in user_watches if w["last_status"] == "die")
+    
+    # Return user tracks
+    c = db.get_conn()
+    fb_tracks = [dict(r) for r in c.execute("SELECT * FROM fb_post_tracks WHERE tg_user_id=?", (tg_id,)).fetchall()]
+    ig_tracks = [dict(r) for r in c.execute("SELECT * FROM ig_tracks WHERE tg_user_id=?", (tg_id,)).fetchall()]
+    ig_videos = [dict(r) for r in c.execute("SELECT * FROM ig_video_tracks WHERE tg_user_id=?", (tg_id,)).fetchall()]
+    tk_tracks = [dict(r) for r in c.execute("SELECT * FROM tracks WHERE tg_user_id=?", (tg_id,)).fetchall()]
+    tk_videos = [dict(r) for r in c.execute("SELECT * FROM video_tracks WHERE tg_user_id=?", (tg_id,)).fetchall()]
+    
+    return {
+        "ok": True,
+        "live": live,
+        "die": die,
+        "fb_tracks": fb_tracks,
+        "ig_tracks": ig_tracks,
+        "ig_videos": ig_videos,
+        "tk_tracks": tk_tracks,
+        "tk_videos": tk_videos,
+    }
 
 
 @router.get("/status")
@@ -204,6 +275,31 @@ def code_detailed(code: str, _=Depends(auth)):
         raise HTTPException(status_code=404, detail="Mã không tồn tại")
     return data
 
+
+class ProxyIn(BaseModel):
+    url: str
+
+@router.get("/proxies")
+def list_proxies(_=Depends(auth)):
+    return db.get_proxies()
+
+@router.post("/proxies")
+def add_proxy(body: ProxyIn, _=Depends(auth)):
+    if not body.url.strip():
+        raise HTTPException(status_code=400, detail="Proxy URL trống")
+    if db.add_proxy(body.url.strip()):
+        return {"ok": True}
+    raise HTTPException(status_code=400, detail="Thêm proxy thất bại (có thể bị trùng)")
+
+@router.delete("/proxies/{proxy_id}")
+def delete_proxy(proxy_id: int, _=Depends(auth)):
+    db.delete_proxy(proxy_id)
+    return {"ok": True}
+
+@router.post("/proxies/{proxy_id}/toggle")
+def toggle_proxy(proxy_id: int, _=Depends(auth)):
+    db.toggle_proxy(proxy_id)
+    return {"ok": True}
 
 @router.get("/analytics")
 def analytics(_=Depends(auth)):
@@ -333,11 +429,28 @@ async def topup(tg_id: int, body: AmountIn, _=Depends(auth)):
         raise HTTPException(status_code=404, detail="Không có user này")
     db.adjust_balance(tg_id, body.amount, "Admin nạp")
     db.add_log("topup", f"Admin nạp {body.amount}", tg_id)
+    
+    # Kiem tra VIP
+    upgraded, new_vip, is_lifetime = db.check_vip_upgrade(tg_id)
+    
     try:
         from .bot import manager, vnd
         if manager.running:
             import asyncio
-            asyncio.create_task(manager.bot.send_message(tg_id, f"💵 Admin vừa nạp cho bạn <b>{vnd(body.amount)}</b> vào tài khoản!"))
+            asyncio.create_task(manager.bot.send_message(tg_id, f"💵 Admin vừa nạp cho bạn <b>{vnd(body.amount)}</b> vào tài khoản!", parse_mode="HTML"))
+            if upgraded or is_lifetime:
+                limit = db.get_setting(f"vip{new_vip}_limit", "10")
+                msg = (
+                    f"🎉 <b>CHÚC MỪNG BẠN ĐÃ LÊN VIP {new_vip}!</b> 🎉\n\n"
+                    f"💎 <b>Quyền lợi mới:</b>\n"
+                    f"- Theo dõi tối đa: <b>{limit} UID/Kênh</b>\n"
+                )
+                if is_lifetime:
+                    msg += "- Hạn sử dụng: <b>VĨNH VIỄN</b>\n\n"
+                else:
+                    msg += "\n"
+                msg += "Cảm ơn bạn đã tin tưởng và sử dụng dịch vụ của chúng tôi! ❤️"
+                asyncio.create_task(manager.bot.send_message(tg_id, msg, parse_mode="HTML"))
     except: pass
     return {"ok": True, "user": _row(db.get_user(tg_id))}
 

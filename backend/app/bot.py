@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Optional
 
 import httpx
@@ -36,9 +37,43 @@ router = Router()
 from aiogram import BaseMiddleware
 from aiogram.types import Message
 
-class SubCheckMiddleware(BaseMiddleware):
+_user_last_cmd = {}
+_user_spam_count = {}
+_user_muted_until = {}
+
+class AntiSpamMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         if isinstance(event, Message) and event.text:
+            tg_id = event.chat.id
+            now_t = time.time()
+            
+            # Check if muted
+            if tg_id in _user_muted_until:
+                if now_t < _user_muted_until[tg_id]:
+                    return  # Ignore silently
+                else:
+                    del _user_muted_until[tg_id]
+                    if tg_id in _user_spam_count:
+                        del _user_spam_count[tg_id]
+            
+            # Anti flood (1 cmd per 3 seconds)
+            last_cmd_time = _user_last_cmd.get(tg_id, 0)
+            if now_t - last_cmd_time < 3:
+                _user_spam_count[tg_id] = _user_spam_count.get(tg_id, 0) + 1
+                if _user_spam_count[tg_id] >= 5:
+                    _user_muted_until[tg_id] = now_t + 900  # Mute 15 mins
+                    await event.answer("🚫 Bạn đã gửi lệnh quá nhanh liên tục. Hệ thống tạm khóa bạn trong 15 phút để chống spam!")
+                    return
+                elif _user_spam_count[tg_id] == 3:
+                    await event.answer("⚠️ Cảnh báo: Vui lòng gửi lệnh chậm lại (mỗi 3 giây 1 lệnh). Nếu tiếp tục bạn sẽ bị khóa 15 phút!")
+                    return
+                return # Ignore too fast cmds without warning if count < 3
+            else:
+                _user_spam_count[tg_id] = 0
+                
+            _user_last_cmd[tg_id] = now_t
+            
+            # Sub check (original logic)
             cmd = event.text.split()[0].lower()
             if "@" in cmd:
                 cmd = cmd.split("@")[0]
@@ -50,14 +85,22 @@ class SubCheckMiddleware(BaseMiddleware):
                 user = db.get_user(event.chat.id)
                 if not user:
                     db.upsert_user(event.chat.id, "admin_group", "Admin Group")
-                    db.set_sub_until(event.chat.id, now() + 3650*24*3600) # 10 years
+                    db.set_sub_until(event.chat.id, now() + 3650*24*3600)
                 return await handler(event, data)
                 
-            if cmd not in ("/start", "/help", "/balance", "/sub", "/bank", "/ref"):
+            if cmd not in ("/start", "/help", "/balance", "/sub", "/bank", "/ref", "/web"):
                 user = db.get_user(event.chat.id)
                 if not user:
                     await event.answer("Bạn chưa /start. Gõ /start trước nhé.")
                     return
+                    
+                # Check daily limit for all tracking and checking cmds
+                if cmd in ("/check", "/tiktok", "/ig", "/track", "/trackv", "/trackig", "/trackvig", "/trackfb"):
+                    can_check, err_msg = db.check_daily_limit(tg_id)
+                    if not can_check:
+                        await event.answer(f"❌ {err_msg}")
+                        return
+                        
                 has_sub = user["sub_until"] and user["sub_until"] > now()
                 has_balance = user["balance"] and user["balance"] > 0
                 if not has_sub and not has_balance:
@@ -65,7 +108,7 @@ class SubCheckMiddleware(BaseMiddleware):
                     return
         return await handler(event, data)
 
-router.message.middleware(SubCheckMiddleware())
+router.message.middleware(AntiSpamMiddleware())
 
 
 MENU = ReplyKeyboardMarkup(
@@ -74,7 +117,8 @@ MENU = ReplyKeyboardMarkup(
         [KeyboardButton(text="/ig"), KeyboardButton(text="/trackig"), KeyboardButton(text="/untrackig")],
         [KeyboardButton(text="/check"), KeyboardButton(text="/list"), KeyboardButton(text="/balance"), KeyboardButton(text="/sub")],
         [KeyboardButton(text="/tracklist"), KeyboardButton(text="/trackiglist"), KeyboardButton(text="/trackfblist")],
-        [KeyboardButton(text="/ref"), KeyboardButton(text="/help")],
+        [KeyboardButton(text="/vip"), KeyboardButton(text="/ref"), KeyboardButton(text="/bank")],
+        [KeyboardButton(text="/web"), KeyboardButton(text="/help")],
     ],
     resize_keyboard=True,
 )
@@ -98,8 +142,18 @@ COMMANDS = [
     BotCommand(command="untrackfb", description="Huỷ theo dõi FB: /untrackfb <uid>"),
     BotCommand(command="ref",       description="Lấy link giới thiệu kiếm tiền"),
     BotCommand(command="help",      description="Hướng dẫn sử dụng"),
+    BotCommand(command="web",       description="Đăng nhập Bảng điều khiển Web"),
 ]
 
+@router.message(Command("web"))
+async def cmd_web(msg: Message):
+    tg_id = msg.chat.id
+    token = db.create_magic_link(tg_id)
+    url = f"https://botcheckv2.onrender.com/auth?token={token}"
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🌐 Đăng nhập Web", url=url)
+    ]])
+    await msg.answer("🔗 Bấm vào nút bên dưới để tự động đăng nhập vào Web (Link có hiệu lực 5 phút):", reply_markup=kb)
 
 # ─── PROCESS TIKTOK CHECK ─────────────────────────────────────
 async def process_tiktok_check(msg: Message, username: str):
@@ -467,7 +521,12 @@ async def on_main_admin_confirm(cb: CallbackQuery):
     user_id = int(parts[3])
     amount = int(parts[4])
     
-    success = db.add_balance(user_id, amount, reason="bank_transfer")
+    try:
+        db.adjust_balance(user_id, amount, reason="bank_transfer")
+        success = True
+    except Exception as e:
+        log.error(f"Lỗi cộng tiền: {e}")
+        success = False
     if success:
         await cb.answer("✅ Đã cộng tiền thành công!", show_alert=True)
         try:
@@ -504,12 +563,16 @@ async def on_bank_amount(msg: Message, state: FSMContext):
 async def on_help(msg: Message):
     help_text = (
         "📖 <b>HƯỚNG DẪN CHECKER V2</b>\n\n"
-        "<b>💰 TÀI KHOẢN & NẠP TIỀN</b>\n"
+        "<b>💰 TÀI KHOẢN &amp; NẠP TIỀN</b>\n"
         "• /bank - Xem thông tin nạp tiền\n"
         "• /bank &lt;số_tiền&gt; - Nạp nhanh (VD: /bank 50000)\n"
         "• /balance - Xem số dư hiện tại\n"
+        "• /vip - Xem cấp độ VIP và đặc quyền\n"
         "• /mycodes - Xem kho mã quà tặng\n"
-        "• /sub - Xem gói và mua gói\n\n"
+        "• /sub - Xem gói và mua gói\n"
+        "• /ref - Lấy link giới thiệu kiếm tiền\n\n"
+        "<b>💻 BẢNG ĐIỀU KHIỂN WEB</b>\n"
+        "• /web - Đăng nhập Web Dashboard không cần mật khẩu\n\n"
         "<b>1. TIKTOK COMMANDS</b>\n"
         "• /tiktok &lt;user&gt; - Check nhanh\n"
         "• /track &lt;user&gt; - Theo dõi follower\n"
@@ -587,6 +650,17 @@ async def on_track(msg: Message):
         return
 
     wait = await msg.answer(f"⏳ Đang thêm theo dõi <b>@{username}</b>...")
+    
+    # VIP Limit check
+    user = db.get_user(msg.chat.id)
+    vip_level = user.get("vip_level", 0) if user else 0
+    limits = {0: 5, 1: 50, 2: 200, 3: 1000}
+    max_limit = limits.get(vip_level, 5)
+    with db._lock:
+        count = db.get_conn().execute("SELECT COUNT(*) FROM tracks WHERE tg_user_id=?", (msg.chat.id,)).fetchone()[0]
+    if count >= max_limit:
+        await wait.edit_text(f"❌ <b>Giới hạn hạng VIP!</b>\nHạng của bạn chỉ cho phép theo dõi tối đa <b>{max_limit}</b> mục.\nVui lòng /untrack các mục cũ hoặc nâng cấp VIP.")
+        return
     try:
         info = await fetch_tiktok_info(username)
         u = msg.from_user
@@ -1082,6 +1156,90 @@ async def on_other(msg: Message):
         )
 
 
+@router.message(Command("vip"))
+async def on_vip(msg: Message):
+    user = db.get_user(msg.chat.id)
+    if not user:
+        await msg.answer("Bạn chưa /start. Gõ /start trước nhé.")
+        return
+    
+    vip_level = user.get("vip_level", 0)
+    vip_names = {0: "Thường (Free)", 1: "VIP 1", 2: "VIP 2", 3: "VIP 3"}
+    limits = {0: 5, 1: 50, 2: 200, 3: 1000}
+    
+    name = vip_names.get(vip_level, "Thường")
+    limit = limits.get(vip_level, 5)
+    
+    auto_renew_status = "Đang Bật 🟢" if user.get("auto_renew") == 1 else "Đang Tắt 🔴"
+    
+    text = (
+        f"👑 <b>THÔNG TIN HẠNG VIP</b>\n"
+        f"━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 Tài khoản: <b>{user.get('username') or user.get('full_name', '')}</b>\n"
+        f"💎 Hạng hiện tại: <b>{name}</b>\n"
+        f"📊 Giới hạn theo dõi: <b>{limit} mục</b>\n"
+        f"🔄 Gia hạn tự động: <b>{auto_renew_status}</b>\n\n"
+        f"💡 <i>Mẹo: Nhấn nút bên dưới để Bật/Tắt tính năng tự động gia hạn gói khi hết hạn (cần đủ số dư ví).</i>\n"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔄 Bật/Tắt Auto-renew", callback_data="toggle_autorenew")]])
+    await msg.answer(text, reply_markup=kb)
+
+@router.callback_query(F.data == "toggle_autorenew")
+async def on_toggle_autorenew(cb: CallbackQuery):
+    user = db.get_user(cb.from_user.id)
+    if not user: return
+    new_status = 0 if user.get("auto_renew") == 1 else 1
+    with db._lock:
+        db.get_conn().execute("UPDATE tg_users SET auto_renew=? WHERE tg_id=?", (new_status, cb.from_user.id))
+        db.get_conn().commit()
+    status_text = "Bật" if new_status == 1 else "Tắt"
+    await cb.answer(f"Đã {status_text} tự động gia hạn!", show_alert=True)
+    # Edit msg text
+    new_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔄 Bật/Tắt Auto-renew", callback_data="toggle_autorenew")]])
+    try: await cb.message.edit_reply_markup(reply_markup=new_kb)
+    except: pass
+
+@router.callback_query(F.data.startswith("chart_"))
+async def on_chart(cb: CallbackQuery):
+    import time, json, urllib.parse
+    parts = cb.data.split("_")
+    if len(parts) < 4: return
+    platform = parts[1]
+    track_type = parts[2]
+    try: track_id = int(parts[3])
+    except: return
+    
+    c = db.get_conn()
+    rows = c.execute("SELECT stat_value, created_at FROM track_history WHERE track_id=? AND platform=? AND track_type=? ORDER BY created_at ASC LIMIT 50", (track_id, platform, track_type)).fetchall()
+    
+    if len(rows) < 2:
+        await cb.answer("Chưa đủ dữ liệu để vẽ biểu đồ (Cần ít nhất 2 lần quét).", show_alert=True)
+        return
+        
+    labels = [time.strftime("%d/%m %H:%M", time.localtime(r["created_at"])) for r in rows]
+    data = [r["stat_value"] for r in rows]
+    
+    chart_config = {
+        "type": "line",
+        "data": {
+            "labels": labels,
+            "datasets": [{
+                "label": f"Tăng trưởng {track_type} ({platform})",
+                "data": data,
+                "fill": False,
+                "borderColor": "blue",
+                "backgroundColor": "rgba(0,0,255,0.1)",
+                "borderWidth": 2
+            }]
+        },
+        "options": {
+            "title": {"display": True, "text": f"Biểu đồ {track_type}"}
+        }
+    }
+    url = "https://quickchart.io/chart?c=" + urllib.parse.quote(json.dumps(chart_config))
+    await cb.message.answer_photo(URLInputFile(url), caption=f"📊 Biểu đồ lịch sử {track_type}")
+    await cb.answer()
+
 # ─── BOT MANAGER ─────────────────────────────────────────────
 class BotManager:
     def __init__(self):
@@ -1307,7 +1465,6 @@ class ZaloBotManager:
                     kb = InlineKeyboardMarkup(inline_keyboard=[[
                         InlineKeyboardButton(text="🎁 Sử dụng luôn", callback_data=f"use_code_{code}")
                     ]])
-                    from .bot import manager
                     await manager.bot.send_message(
                         tg_id, 
                         f"🎉 <b>Thanh toán thành công!</b>\n\nĐây là mã code nạp tiền trị giá <b>{vnd(amount)}</b> của bạn:\n"
@@ -1337,8 +1494,15 @@ class ZaloBotManager:
             await self.cmd_topup(chat_id, text)
         elif txt_lower.startswith("/phatcode"):
             await self.cmd_phatcode(chat_id, text)
+        elif txt_lower.startswith("/web"):
+            token = db.create_magic_link(int(chat_id))
+            url = f"http://localhost:8000/auth?token={token}"
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🌐 Đăng nhập Web", url=url)
+            ]])
+            await self.send_message(chat_id, "🔗 Bấm vào nút bên dưới để tự động đăng nhập vào Web (Link có hiệu lực 5 phút):", reply_markup=kb)
         else:
-            await self.send_message(chat_id, f"💡 Zalo Chat ID của bạn: {chat_id}\n\nLệnh có sẵn:\n- Copy Chat ID dán vào web để nhận thông báo\n- Phát Code: /phatcode <ID> <SỐ TIỀN>\n- Cộng thẳng: /topup <ID> <SỐ TIỀN>")
+            await self.send_message(chat_id, f"💡 Zalo Chat ID của bạn: {chat_id}\n\nLệnh có sẵn:\n- Copy Chat ID dán vào web để nhận thông báo\n- Phát Code: /phatcode <ID> <SỐ TIỀN>\n- Cộng thẳng: /topup <ID> <SỐ TIỀN>\n- Bảng điều khiển Web: /web")
 
     async def cmd_phatcode(self, chat_id, text):
         admin_id = db.get_setting("admin_zalo_id", "")

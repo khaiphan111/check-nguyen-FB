@@ -15,6 +15,7 @@ import toast from "react-hot-toast";
 import { Badge, Button, Card, CardContent, Input } from "../components/ui";
 import { api } from "../lib/api";
 import { fromNow, vnd } from "../lib/utils";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 function Stat({ icon: Icon, label, value, sub }: any) {
   return (
@@ -108,6 +109,40 @@ export default function Dashboard({ status, onRefresh }: any) {
         <Stat icon={IconUsers} label="Tiktok/IG Accounts" value={status.tracks_total || 0} />
         <Stat icon={IconCircleCheck} label="Tiktok/IG Videos" value={status.video_tracks_total || 0} />
       </div>
+
+      {analytics && analytics.chart_data && (
+        <Card>
+          <CardContent className="flex flex-col gap-4">
+            <h2 className="text-lg font-medium">Biểu đồ 7 ngày gần nhất</h2>
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={analytics.chart_data} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="colorUsers" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
+                  <XAxis dataKey="date" tickLine={false} axisLine={false} tick={{ fontSize: 12 }} />
+                  <YAxis yAxisId="left" tickLine={false} axisLine={false} tick={{ fontSize: 12 }} tickFormatter={(v) => v > 1000 ? (v/1000) + 'k' : v} />
+                  <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} tick={{ fontSize: 12 }} />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    formatter={(value: any, name: any) => [name === 'revenue' ? vnd(value) : value, name === 'revenue' ? 'Doanh thu' : 'Khách mới']}
+                  />
+                  <Area yAxisId="left" type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorRev)" name="revenue" />
+                  <Area yAxisId="right" type="monotone" dataKey="users" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorUsers)" name="users" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent className="flex flex-col gap-4">

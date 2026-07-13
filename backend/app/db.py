@@ -204,20 +204,36 @@ def init_db() -> None:
                 id              BIGINT PRIMARY KEY AUTOINCREMENT,
                 tg_user_id      BIGINT DEFAULT 0,
                 tg_username     TEXT    DEFAULT '',
-                zalo_user_id    TEXT    DEFAULT '',
                 post_url        TEXT    NOT NULL,
-                post_id         TEXT    DEFAULT '',
-                fb_username     TEXT    DEFAULT '',
+                post_id         TEXT    NOT NULL,
+                author_name     TEXT    DEFAULT '',
                 post_desc       TEXT    DEFAULT '',
-                cover_url       TEXT    DEFAULT '',
-                check_interval  BIGINT DEFAULT 3600,
                 last_likes      BIGINT DEFAULT 0,
                 last_comments   BIGINT DEFAULT 0,
                 last_shares     BIGINT DEFAULT 0,
+                check_interval  BIGINT DEFAULT 3600,
                 last_checked    BIGINT DEFAULT 0,
-                created_at      BIGINT NOT NULL,
-                active          BIGINT DEFAULT 1
+                active          BIGINT DEFAULT 1,
+                last_spike_alert_at BIGINT DEFAULT 0
             );
+            
+            CREATE TABLE IF NOT EXISTS proxies (
+                id              BIGINT PRIMARY KEY AUTOINCREMENT,
+                proxy_url       TEXT UNIQUE NOT NULL,
+                fail_count      BIGINT DEFAULT 0,
+                is_active       BIGINT DEFAULT 1,
+                created_at      BIGINT
+            );
+
+            CREATE TABLE IF NOT EXISTS track_history (
+                id              BIGINT PRIMARY KEY AUTOINCREMENT,
+                track_id        BIGINT NOT NULL,
+                platform        TEXT NOT NULL,
+                track_type      TEXT NOT NULL,
+                stat_value      BIGINT DEFAULT 0,
+                created_at      BIGINT
+            );
+            
             CREATE TABLE IF NOT EXISTS giftcodes (
                 id              BIGINT PRIMARY KEY AUTOINCREMENT,
                 code            TEXT    NOT NULL UNIQUE,
@@ -254,18 +270,20 @@ def migrate_db():
     c = get_conn()
     with _lock:
         for sql in [
+            "ALTER TABLE tg_users ADD COLUMN vip_level BIGINT DEFAULT 0",
+            "ALTER TABLE tg_users ADD COLUMN auto_renew BIGINT DEFAULT 1",
+            "ALTER TABLE tg_users ADD COLUMN role TEXT DEFAULT 'user'",
+            "ALTER TABLE tg_users ADD COLUMN total_topup BIGINT DEFAULT 0",
+            "ALTER TABLE tg_users ADD COLUMN daily_checks BIGINT DEFAULT 0",
+            "ALTER TABLE tg_users ADD COLUMN last_check_date TEXT DEFAULT ''",
             "ALTER TABLE tracks ADD COLUMN zalo_user_id TEXT DEFAULT ''",
             "",
             "ALTER TABLE ig_tracks ADD COLUMN avatar_url TEXT DEFAULT ''",
             "ALTER TABLE video_tracks ADD COLUMN zalo_user_id TEXT DEFAULT ''",
-            "ALTER TABLE video_tracks ADD COLUMN last_favorites BIGINT DEFAULT 0",
-            "ALTER TABLE tg_users ADD COLUMN trial_activated BIGINT DEFAULT 0",
-            "ALTER TABLE tg_users ADD COLUMN referrer_id BIGINT DEFAULT 0",
-            "ALTER TABLE tg_users ADD COLUMN ref_earnings BIGINT DEFAULT 0",
-            "ALTER TABLE tg_users ADD COLUMN expired_notified BIGINT DEFAULT 0",
-            "ALTER TABLE giftcodes ADD COLUMN max_uses BIGINT DEFAULT 1",
-            "ALTER TABLE giftcodes ADD COLUMN current_uses BIGINT DEFAULT 0",
-            "ALTER TABLE giftcodes ADD COLUMN expire_at BIGINT DEFAULT 0"
+            "ALTER TABLE ig_video_tracks ADD COLUMN last_spike_alert_at BIGINT DEFAULT 0",
+            "ALTER TABLE fb_post_tracks ADD COLUMN last_spike_alert_at BIGINT DEFAULT 0",
+            "CREATE TABLE IF NOT EXISTS proxies (id BIGINT PRIMARY KEY AUTOINCREMENT, proxy_url TEXT UNIQUE NOT NULL, fail_count BIGINT DEFAULT 0, is_active BIGINT DEFAULT 1, created_at BIGINT)",
+            "CREATE TABLE IF NOT EXISTS track_history (id BIGINT PRIMARY KEY AUTOINCREMENT, track_id BIGINT NOT NULL, platform TEXT NOT NULL, track_type TEXT NOT NULL, stat_value BIGINT DEFAULT 0, created_at BIGINT)"
         ]:
             try:
                 c.execute(sql)
@@ -308,12 +326,24 @@ def get_analytics() -> dict:
     this_month_start = int(time.mktime(time.strptime(time.strftime("%Y-%m-01"), "%Y-%m-%d")))
     revenue_month = c.execute("SELECT SUM(amount) as s FROM txns WHERE amount > 0 AND ts >= ?", (this_month_start,)).fetchone()["s"] or 0
 
+    # 7 days revenue & users chart
+    chart_data = []
+    for i in range(6, -1, -1):
+        day_ts = today_start - i * 86400
+        next_day_ts = day_ts + 86400
+        day_str = time.strftime("%d/%m", time.localtime(day_ts))
+        
+        rev = c.execute("SELECT SUM(amount) as s FROM txns WHERE amount > 0 AND ts >= ? AND ts < ?", (day_ts, next_day_ts)).fetchone()["s"] or 0
+        usr = c.execute("SELECT COUNT(*) as c FROM tg_users WHERE created_at >= ? AND created_at < ?", (day_ts, next_day_ts)).fetchone()["c"]
+        chart_data.append({"date": day_str, "revenue": rev, "users": usr})
+
     return {
         "total_users": total_users,
         "new_users_today": new_users_today,
         "total_revenue": total_revenue,
         "revenue_today": revenue_today,
-        "revenue_month": revenue_month
+        "revenue_month": revenue_month,
+        "chart_data": chart_data
     }
 
 def all_settings() -> dict:
@@ -344,7 +374,11 @@ def list_users() -> list:
 def adjust_balance(tg_id: int, amount: int, reason: str) -> None:
     with _lock:
         c = get_conn()
-        c.execute("UPDATE tg_users SET balance = balance + ? WHERE tg_id=?", (amount, tg_id))
+        if amount > 0:
+            c.execute("UPDATE tg_users SET balance = balance + ?, total_topup = total_topup + ? WHERE tg_id=?", (amount, amount, tg_id))
+        else:
+            c.execute("UPDATE tg_users SET balance = balance + ? WHERE tg_id=?", (amount, tg_id))
+            
         c.execute(
             "INSERT INTO txns(ts, tg_id, amount, reason) VALUES(?,?,?,?)",
             (int(time.time()), tg_id, amount, reason),
@@ -367,6 +401,96 @@ def adjust_balance(tg_id: int, amount: int, reason: str) -> None:
                             asyncio.create_task(manager.bot.send_message(ref_id, f"🎁 <b>Hoa hồng giới thiệu!</b>\nBạn vừa nhận được <b>{vnd(ref_bonus)}</b> từ lượt nạp của bạn bè!", parse_mode="HTML"))
                     except: pass
         c.commit()
+        
+_magic_links = {}
+
+def create_magic_link(tg_id: int) -> str:
+    import secrets
+    token = secrets.token_urlsafe(32)
+    _magic_links[token] = {"tg_id": tg_id, "exp": int(time.time()) + 300}
+    return token
+
+def verify_magic_link(token: str) -> int:
+    if token in _magic_links:
+        data = _magic_links[token]
+        if data["exp"] > time.time():
+            return data["tg_id"]
+        else:
+            del _magic_links[token]
+    return 0
+
+def check_vip_upgrade(tg_id: int) -> tuple[bool, int, bool]:
+    """Returns (upgraded, new_vip_level, is_lifetime)"""
+    with _lock:
+        c = get_conn()
+        user = c.execute("SELECT total_topup, vip_level, sub_until FROM tg_users WHERE tg_id=?", (tg_id,)).fetchone()
+        if not user: return False, 0, False
+        
+        total = user["total_topup"]
+        current_vip = user["vip_level"]
+        
+        def _get_price(key: str) -> int:
+            row = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            try: return int(row["value"]) if row and row["value"] else 0
+            except: return 0
+            
+        p1 = _get_price("vip1_price")
+        p2 = _get_price("vip2_price")
+        p3 = _get_price("vip3_price")
+        plife = _get_price("vip_lifetime_price")
+        
+        new_vip = current_vip
+        if p3 > 0 and total >= p3: new_vip = 3
+        elif p2 > 0 and total >= p2 and new_vip < 2: new_vip = 2
+        elif p1 > 0 and total >= p1 and new_vip < 1: new_vip = 1
+        
+        is_lifetime = False
+        updates = []
+        params = []
+        if new_vip > current_vip:
+            updates.append("vip_level=?")
+            params.append(new_vip)
+            
+        if plife > 0 and total >= plife and user["sub_until"] < 9999999999:
+            updates.append("sub_until=?")
+            params.append(9999999999)
+            is_lifetime = True
+            
+        if updates:
+            params.append(tg_id)
+            c.execute(f"UPDATE tg_users SET {', '.join(updates)} WHERE tg_id=?", tuple(params))
+            c.commit()
+            return True, new_vip, is_lifetime
+            
+        return False, current_vip, False
+
+def check_daily_limit(tg_id: int) -> tuple[bool, str]:
+    """Returns (can_check, error_message)"""
+    with _lock:
+        c = get_conn()
+        user = c.execute("SELECT vip_level, daily_checks, last_check_date FROM tg_users WHERE tg_id=?", (tg_id,)).fetchone()
+        if not user: return False, "Bạn chưa đăng ký tài khoản."
+        
+        today = time.strftime("%Y-%m-%d")
+        if user["last_check_date"] != today:
+            c.execute("UPDATE tg_users SET daily_checks=0, last_check_date=? WHERE tg_id=?", (today, tg_id))
+            daily_checks = 0
+        else:
+            daily_checks = user["daily_checks"]
+            
+        vip = user["vip_level"]
+        
+        # Default limits if not set: VIP0=5, VIP1=50, VIP2=200, VIP3=1000
+        row = c.execute("SELECT value FROM settings WHERE key=?", (f"vip{vip}_daily_check",)).fetchone()
+        try: limit = int(row["value"]) if row and row["value"] else [5, 50, 200, 1000][vip if vip <= 3 else 3]
+        except: limit = [5, 50, 200, 1000][vip if vip <= 3 else 3]
+        
+        if daily_checks >= limit:
+            return False, f"Bạn đã đạt giới hạn {limit} lượt check hôm nay. Nâng cấp VIP để check thêm!"
+            
+        c.execute("UPDATE tg_users SET daily_checks = daily_checks + 1 WHERE tg_id=?", (tg_id,))
+        c.commit()
+        return True, ""
 
 def set_sub_until(tg_id: int, epoch: int) -> None:
     with _lock:
@@ -378,6 +502,8 @@ def reset_user(tg_id: int) -> None:
     with _lock:
         c = get_conn()
         c.execute("UPDATE tg_users SET balance=0, sub_until=0, trial_activated=0 WHERE tg_id=?", (tg_id,))
+        c.execute("DELETE FROM fb_post_tracks WHERE tg_user_id=?", (tg_id,))
+        c.execute("DELETE FROM txns WHERE tg_id=?", (tg_id,))
         c.commit()
 
 def activate_trial(tg_id: int, days: int) -> bool:
@@ -866,3 +992,57 @@ def delete_user(tg_id: int) -> None:
         c.execute("DELETE FROM fb_post_tracks WHERE tg_user_id=?", (tg_id,))
         c.execute("DELETE FROM txns WHERE tg_id=?", (tg_id,))
         c.commit()
+
+def get_random_proxy() -> str:
+    with _lock:
+        c = get_conn()
+        row = c.execute("SELECT proxy_url FROM proxies WHERE is_active=1 ORDER BY RANDOM() LIMIT 1").fetchone()
+        if row:
+            return row["proxy_url"]
+    return None
+
+def mark_proxy_failed(proxy_url: str):
+    if not proxy_url: return
+    with _lock:
+        c = get_conn()
+        c.execute("UPDATE proxies SET fail_count = fail_count + 1 WHERE proxy_url=?", (proxy_url,))
+        c.execute("UPDATE proxies SET is_active = 0 WHERE proxy_url=? AND fail_count > 3", (proxy_url,))
+        c.commit()
+
+def record_track_history(track_id: int, platform: str, track_type: str, stat_value: int):
+    with _lock:
+        c = get_conn()
+        c.execute(
+            "INSERT INTO track_history(track_id, platform, track_type, stat_value, created_at) VALUES (?,?,?,?,?)",
+            (track_id, platform, track_type, stat_value, int(time.time()))
+        )
+        c.commit()
+
+def get_proxies() -> list:
+    c = get_conn()
+    rows = c.execute("SELECT * FROM proxies ORDER BY id DESC").fetchall()
+    return [dict(r) for r in rows]
+
+def add_proxy(url: str) -> bool:
+    with _lock:
+        c = get_conn()
+        try:
+            c.execute("INSERT INTO proxies(proxy_url, created_at) VALUES (?,?)", (url, int(time.time())))
+            c.commit()
+            return True
+        except Exception:
+            return False
+
+def delete_proxy(proxy_id: int) -> bool:
+    with _lock:
+        c = get_conn()
+        c.execute("DELETE FROM proxies WHERE id=?", (proxy_id,))
+        c.commit()
+        return True
+
+def toggle_proxy(proxy_id: int) -> bool:
+    with _lock:
+        c = get_conn()
+        c.execute("UPDATE proxies SET is_active = CASE WHEN is_active=1 THEN 0 ELSE 1 END WHERE id=?", (proxy_id,))
+        c.commit()
+        return True

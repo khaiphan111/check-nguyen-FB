@@ -57,7 +57,8 @@ async def check_uid(uid: str) -> dict:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        proxy = db.get_random_proxy()
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, proxy=proxy) as client:
             r = await client.get(url, headers=headers)
             
             result["ok"] = True
@@ -78,7 +79,7 @@ async def check_uid(uid: str) -> dict:
                 result["alive"] = False
                 
     except Exception as e:
-        # Lỗi mạng
+        if proxy: db.mark_proxy_failed(proxy)
         pass
 
     return result
@@ -155,7 +156,8 @@ async def fetch_fb_post_info(url: str) -> dict:
         if cookie:
             fetch_url = re.sub(r'https?://(?:www\.|m\.)?facebook\.com', 'https://mbasic.facebook.com', url)
             
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        proxy = db.get_random_proxy()
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, proxy=proxy) as client:
             r = await client.get(fetch_url, headers=headers)
             html = r.text
             
@@ -177,6 +179,7 @@ async def fetch_fb_post_info(url: str) -> dict:
             if shares_match: result["shares"] = parse_num(shares_match.group(1))
             
     except Exception:
+        if proxy: db.mark_proxy_failed(proxy)
         pass
         
     return result

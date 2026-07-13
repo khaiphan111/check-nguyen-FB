@@ -10,14 +10,16 @@ import {
   IconSettings,
   IconSun,
   IconUsers,
+  IconServer,
 } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import toast, { Toaster } from "react-hot-toast";
 import { Button } from "./components/ui";
-import { api, clearToken, getToken } from "./lib/api";
+import { api, clearToken, getToken, setToken } from "./lib/api";
 import { useTheme } from "./lib/theme";
 import About from "./pages/About";
 import Dashboard from "./pages/Dashboard";
+import UserDashboard from "./pages/UserDashboard";
 import Login from "./pages/Login";
 import Logs from "./pages/Logs";
 import Settings from "./pages/Settings";
@@ -27,6 +29,7 @@ import Tiktok from "./pages/Tiktok";
 import Instagram from "./pages/Instagram";
 import Codes from "./pages/Codes";
 import Broadcast from "./pages/Broadcast";
+import Proxies from "./pages/Proxies";
 
 const NAV = [
   { key: "dashboard", label: "Tổng quan", icon: IconActivity },
@@ -36,6 +39,7 @@ const NAV = [
   { key: "instagram", label: "Instagram", icon: IconListCheck },
   { key: "users", label: "Người dùng", icon: IconUsers },
   { key: "codes", label: "Kho Code", icon: IconListCheck },
+  { key: "proxies", label: "Hệ thống Proxy", icon: IconServer },
   { key: "logs", label: "Nhật ký", icon: IconHistory },
   { key: "settings", label: "Cấu hình", icon: IconSettings },
   { key: "about", label: "Giới thiệu", icon: IconInfoCircle },
@@ -55,9 +59,34 @@ export default function App() {
     }
   }
 
+  const isUser = getToken().startsWith("user-");
+
   useEffect(() => {
-    if (authed) refreshStatus();
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    if (window.location.pathname === "/auth" && token) {
+      fetch("/api/user/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.ok) {
+            setToken(data.token);
+            window.location.href = "/";
+          } else {
+            toast.error(data.detail || "Link hết hạn");
+          }
+        });
+    } else if (authed && !isUser) {
+      refreshStatus();
+    }
   }, [authed]);
+
+  if (window.location.pathname === "/auth") {
+    return <div className="p-10 text-center">Đang đăng nhập...</div>;
+  }
 
   if (!authed) {
     return (
@@ -72,6 +101,10 @@ export default function App() {
     clearToken();
     setAuthed(false);
     toast.success("Đã đăng xuất");
+  }
+
+  if (isUser) {
+    return <UserDashboard onLogout={logout} />;
   }
 
   const setupNeeded = status && !status.setup_done;
@@ -136,10 +169,11 @@ export default function App() {
         {tab === "instagram" && <Instagram />}
         {tab === "users" && <Users />}
         {tab === "codes" && <Codes />}
-        {tab === "logs" && <Logs />}
-        {tab === "settings" && <Settings onSaved={refreshStatus} />}
-        {tab === "about" && <About />}
-        {tab === "broadcast" && <Broadcast />}
+        { tab === "logs" && <Logs /> }
+        { tab === "settings" && <Settings onSaved={refreshStatus} /> }
+        { tab === "about" && <About /> }
+        { tab === "broadcast" && <Broadcast /> }
+        { tab === "proxies" && <Proxies /> }
       </main>
     </div>
   );

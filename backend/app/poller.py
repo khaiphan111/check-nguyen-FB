@@ -27,6 +27,12 @@ class FollowerPoller:
 
     def set_zalo_bot(self, bot): self._zalo_bot = bot
 
+    async def _alert_admin(self, msg: str):
+        admin_tg_id = db.get_setting("admin_tg_id", "")
+        if admin_tg_id and self._bot:
+            try: await self._bot.send_message(int(admin_tg_id), f"⚠️ <b>SYSTEM ALERT</b>\n{msg}", parse_mode="HTML")
+            except: pass
+
     def start(self):
         if not (self._account_task and not self._account_task.done()):
             self._account_task = asyncio.create_task(self._account_loop())
@@ -34,15 +40,21 @@ class FollowerPoller:
             self._video_task = asyncio.create_task(self._video_loop())
         if not (self._backup_task and not self._backup_task.done()):
             self._backup_task = asyncio.create_task(self._backup_loop())
-        log.info("Poller khoi dong (account + video + backup).")
+        if not hasattr(self, '_proxy_task') or not (self._proxy_task and not self._proxy_task.done()):
+            self._proxy_task = asyncio.create_task(self._proxy_loop())
+        log.info("Poller khoi dong (account + video + backup + proxy).")
 
     async def stop(self):
-        for t in [self._account_task, self._video_task, self._backup_task]:
+        tasks = [self._account_task, self._video_task, self._backup_task]
+        if hasattr(self, '_proxy_task'):
+            tasks.append(self._proxy_task)
+        for t in tasks:
             if t:
                 t.cancel()
                 try: await t
                 except: pass
         self._account_task = self._video_task = self._backup_task = None
+        self._proxy_task = None
 
     # ══ BACKUP LOOP ═══════════════════════════════════════════
     async def _backup_loop(self):
@@ -103,9 +115,23 @@ class FollowerPoller:
             if not u:
                 valid.append(t)
                 continue
-            if u["sub_until"] > time.time():
+            now_ts = int(time.time())
+            if u["sub_until"] > now_ts:
                 valid.append(t)
             else:
+                price = int(db.get_setting("price_per_month", "50000"))
+                if u.get("auto_renew", 0) == 1 and u.get("balance", 0) >= price:
+                    with db._lock:
+                        c = db.get_conn()
+                        c.execute("UPDATE tg_users SET balance = balance - ?, sub_until = ? WHERE tg_id=?", (price, now_ts + 30*86400, tg_id))
+                        c.execute("INSERT INTO txns(ts, tg_id, amount, reason) VALUES(?,?,?,?)", (now_ts, tg_id, -price, "auto_renew_sub"))
+                        c.commit()
+                    valid.append(t)
+                    if self._bot:
+                        try: await self._bot.send_message(tg_id, f"🔄 <b>Gia hạn tự động thành công!</b>\nHệ thống đã trừ <b>{price:,}đ</b> và gia hạn thêm 30 ngày sử dụng.", parse_mode="HTML")
+                        except: pass
+                    continue
+                
                 if u["expired_notified"] == 0:
                     with db._lock:
                         db.get_conn().execute("UPDATE tg_users SET expired_notified=1 WHERE tg_id=?", (tg_id,))
@@ -133,6 +159,7 @@ class FollowerPoller:
                 last_vid_id = track.get("last_video_id", "") or ""
 
                 db.update_track_stats(track["id"], new_fl, info["following"], new_vid, new_vid_id)
+                db.record_track_history(track["id"], "tiktok_account", "followers", new_fl)
 
                 # Follower change notify
                 fl_diff = new_fl - old_fl
@@ -191,6 +218,8 @@ class FollowerPoller:
 
             except Exception as e:
                 log.warning("Loi check @%s: %s", track["tiktok_username"], e)
+                if "proxy" in str(e).lower() or "429" in str(e):
+                    await self._alert_admin(f"Lỗi API/Proxy khi check TikTok @{track['tiktok_username']}: {e}")
             await asyncio.sleep(3)
 
     # ══ VIDEO LOOP ═════════════════════════════════════════════
@@ -226,6 +255,22 @@ class FollowerPoller:
                 new_p, new_l, new_c, new_s, new_f = info["plays"], info["likes"], info["comments"], info["shares"], info.get("favorites", 0)
 
                 db.update_video_track_stats(vt["id"], new_p, new_l, new_c, new_s, new_f)
+                db.record_track_history(vt["id"], "tiktok_video", "views", new_p)
+
+                dp = new_p - old["plays"]
+                now_ts = int(time.time())
+                spike_threshold = int(db.get_setting("spike_threshold", "10000"))
+                if dp >= spike_threshold and (now_ts - vt.get("last_spike_alert_at", 0)) > 86400:
+                    with db._lock:
+                        db.get_conn().execute("UPDATE video_tracks SET last_spike_alert_at=? WHERE id=?", (now_ts, vt["id"]))
+                        db.get_conn().commit()
+                    spike_msg = f"🔥 <b>CẢNH BÁO: VIDEO LÊN XU HƯỚNG!</b>\n\nVideo <a href='{info['url']}'>TikTok</a> của bạn vừa tăng đột biến <b>+{dp:,} views</b>!"
+                    zalo_id = vt.get("zalo_user_id")
+                    tg_id = vt.get("tg_user_id")
+                    try:
+                        if zalo_id and self._zalo_bot: await self._zalo_bot.send_message(zalo_id, spike_msg)
+                        elif tg_id and self._bot: await self._bot.send_message(tg_id, spike_msg, parse_mode="HTML")
+                    except: pass
 
                 changed = (new_p != old["plays"] or new_l != old["likes"]
                            or new_c != old["comments"] or new_s != old["shares"]
@@ -317,6 +362,7 @@ class FollowerPoller:
                 info = await ig.fetch_ig_info(track["ig_username"])
                 new_fl, old_fl = info["followers"], track["last_followers"]
                 db.update_ig_track_stats(track["id"], new_fl, info["following"], info["posts"])
+                db.record_track_history(track["id"], "ig_account", "followers", new_fl)
 
                 fl_diff = new_fl - old_fl
                 if fl_diff != 0 and old_fl > 0:
@@ -437,6 +483,7 @@ class FollowerPoller:
                 new_l, new_c, new_v = info["likes"], info["comments"], info.get("views", 0)
 
                 db.update_ig_video_track_stats(vt["id"], new_l, new_c, new_v)
+                db.record_track_history(vt["id"], "ig_video", "views", new_v)
 
                 changed = (new_l != old["likes"] or new_c != old["comments"] or new_v != old["views"])
 
@@ -464,6 +511,58 @@ class FollowerPoller:
             except Exception as e:
                 log.warning("Loi check IG post %s: %s", vt["post_url"], e)
             await asyncio.sleep(4)
+
+    async def _proxy_loop(self):
+        import httpx
+        while True:
+            await asyncio.sleep(600)  # run every 10 mins
+            try:
+                proxies = db.get_proxies()
+                active_proxies = [p for p in proxies if p["is_active"] == 1]
+                
+                # Check proxy health
+                for p in active_proxies:
+                    try:
+                        async with httpx.AsyncClient(proxy=p["proxy_url"], timeout=10) as client:
+                            resp = await client.get("https://www.google.com/")
+                            if resp.status_code == 200:
+                                with db._lock:
+                                    c = db.get_conn()
+                                    c.execute("UPDATE proxies SET fail_count=0 WHERE id=?", (p["id"],))
+                                    c.commit()
+                            else:
+                                db.mark_proxy_failed(p["proxy_url"])
+                    except Exception:
+                        db.mark_proxy_failed(p["proxy_url"])
+                        
+                # Auto fetch new proxy if below min
+                min_active = int(db.get_setting("min_active_proxies", "0") or "0")
+                active_proxies = [p for p in db.get_proxies() if p["is_active"] == 1]
+                if min_active > 0 and len(active_proxies) < min_active:
+                    api_url = db.get_setting("proxy_api_url", "")
+                    api_key = db.get_setting("proxy_api_key", "")
+                    if api_url and api_key:
+                        try:
+                            # Generic POST call
+                            async with httpx.AsyncClient() as client:
+                                r = await client.post(api_url, json={"api_key": api_key})
+                                if r.status_code == 200:
+                                    data = r.json()
+                                    proxy_str = ""
+                                    if "data" in data and isinstance(data["data"], dict):
+                                        proxy_str = data["data"].get("https", "") or data["data"].get("http", "")
+                                    elif "proxy" in data:
+                                        proxy_str = data["proxy"]
+                                        
+                                    if proxy_str:
+                                        if not proxy_str.startswith("http"):
+                                            proxy_str = "http://" + proxy_str
+                                        db.add_proxy(proxy_str)
+                                        log.info(f"Auto fetched new proxy: {proxy_str}")
+                        except Exception as e:
+                            log.error(f"Error fetching proxy: {e}")
+            except Exception as e:
+                log.error(f"Proxy loop error: {e}")
 
 
 poller = FollowerPoller()

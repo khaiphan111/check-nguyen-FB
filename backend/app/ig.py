@@ -63,13 +63,18 @@ async def _fetch_ig_rapidapi(username: str) -> dict:
         "x-rapidapi-host": "instagram-scraper-api2.p.rapidapi.com"
     }
     url = f"https://instagram-scraper-api2.p.rapidapi.com/v1/info?username_or_id_or_url={username}"
+    proxy = db.get_random_proxy()
     
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.get(url, headers=headers)
-        if resp.status_code != 200:
-            raise ValueError(f"Lỗi RapidAPI: {resp.status_code} - {resp.text[:100]}")
-        data = resp.json().get("data", {})
-        if not data: raise ValueError("Không tìm thấy người dùng.")
+    try:
+        async with httpx.AsyncClient(timeout=20, proxy=proxy) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code != 200:
+                raise ValueError(f"Lỗi RapidAPI: {resp.status_code} - {resp.text[:100]}")
+            data = resp.json().get("data", {})
+            if not data: raise ValueError("Không tìm thấy người dùng.")
+    except Exception as e:
+        if proxy: db.mark_proxy_failed(proxy)
+        raise e
         
         return {
             "uid": data.get("id", ""),
@@ -93,12 +98,17 @@ async def _fetch_ig_post_rapidapi(shortcode: str) -> dict:
         "x-rapidapi-host": "instagram-scraper-api2.p.rapidapi.com"
     }
     url = f"https://instagram-scraper-api2.p.rapidapi.com/v1/post_info?code_or_id_or_url={shortcode}"
+    proxy = db.get_random_proxy()
     
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.get(url, headers=headers)
-        if resp.status_code != 200: raise ValueError(f"Lỗi RapidAPI: {resp.status_code}")
-        data = resp.json().get("data", {})
-        if not data: raise ValueError("Không tìm thấy bài viết.")
+    try:
+        async with httpx.AsyncClient(timeout=20, proxy=proxy) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code != 200: raise ValueError(f"Lỗi RapidAPI: {resp.status_code}")
+            data = resp.json().get("data", {})
+            if not data: raise ValueError("Không tìm thấy bài viết.")
+    except Exception as e:
+        if proxy: db.mark_proxy_failed(proxy)
+        raise e
         
         author = data.get("owner", {}).get("username", "")
         desc = ""
@@ -189,60 +199,70 @@ async def _fetch_ig_public(username: str) -> dict:
         "X-IG-App-ID": "936619743392459",
     }
     url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
+    proxy = db.get_random_proxy()
     
-    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
-        resp = await client.get(url)
-        if resp.status_code == 429:
-            raise ValueError("IG Public Web đang bị chặn (429). Hãy đổi sang dùng Instaloader hoặc RapidAPI trong Cấu Hình.")
-        if resp.status_code != 200:
-            raise ValueError(f"Lỗi Public IG: {resp.status_code}")
-        try:
-            data = resp.json().get("data", {}).get("user", {})
-            if not data: raise ValueError("Không có data")
-            return {
-                "uid": data.get("id", ""),
-                "username": data.get("username", username),
-                "full_name": data.get("full_name", ""),
-                "bio": data.get("biography", ""),
-                "verified": data.get("is_verified", False),
-                "private": data.get("is_private", False),
-                "avatar": data.get("profile_pic_url_hd", ""),
-                "followers": data.get("edge_followed_by", {}).get("count", 0),
-                "following": data.get("edge_follow", {}).get("count", 0),
-                "posts": data.get("edge_owner_to_timeline_media", {}).get("count", 0),
-            }
-        except:
-            raise ValueError("Không thể phân tích dữ liệu Instagram lúc này.")
+    try:
+        async with httpx.AsyncClient(timeout=15, headers=headers, proxy=proxy) as client:
+            resp = await client.get(url)
+            if resp.status_code == 429:
+                raise ValueError("IG Public Web đang bị chặn (429). Hãy đổi sang dùng Instaloader hoặc RapidAPI trong Cấu Hình.")
+            if resp.status_code != 200:
+                raise ValueError(f"Lỗi Public IG: {resp.status_code}")
+            try:
+                data = resp.json().get("data", {}).get("user", {})
+                if not data: raise ValueError("Không có data")
+                return {
+                    "uid": data.get("id", ""),
+                    "username": data.get("username", username),
+                    "full_name": data.get("full_name", ""),
+                    "bio": data.get("biography", ""),
+                    "verified": data.get("is_verified", False),
+                    "private": data.get("is_private", False),
+                    "avatar": data.get("profile_pic_url_hd", ""),
+                    "followers": data.get("edge_followed_by", {}).get("count", 0),
+                    "following": data.get("edge_follow", {}).get("count", 0),
+                    "posts": data.get("edge_owner_to_timeline_media", {}).get("count", 0),
+                }
+            except:
+                raise ValueError("Không thể phân tích dữ liệu Instagram lúc này.")
+    except Exception as e:
+        if proxy: db.mark_proxy_failed(proxy)
+        raise e
 
 async def _fetch_ig_post_public(shortcode: str) -> dict:
     url = f"https://www.instagram.com/graphql/query/?query_hash=b3055c01b4b222b8a47dc12b090e4e64&variables=%7B%22shortcode%22%3A%22{shortcode}%22%7D"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     }
-    async with httpx.AsyncClient(timeout=15, headers=headers) as client:
-        resp = await client.get(url)
-        if resp.status_code == 429:
-            raise ValueError("IG Public Web bị chặn (429).")
-        try:
-            data = resp.json().get("data", {}).get("shortcode_media", {})
-            if not data: raise ValueError("Không có data")
-            author = data.get("owner", {}).get("username", "")
-            desc = ""
-            try: desc = data.get("edge_media_to_caption", {}).get("edges", [])[0].get("node", {}).get("text", "")
-            except: pass
-            
-            return {
-                "id": shortcode,
-                "username": author,
-                "desc": desc,
-                "cover": data.get("display_url", ""),
-                "url": f"https://www.instagram.com/p/{shortcode}/",
-                "likes": data.get("edge_media_preview_like", {}).get("count", 0),
-                "comments": data.get("edge_media_to_parent_comment", {}).get("count", 0),
-                "views": data.get("video_view_count", 0),
-            }
-        except:
-            raise ValueError("Không thể lấy dữ liệu bài viết IG. Hãy dùng Instaloader/RapidAPI.")
+    proxy = db.get_random_proxy()
+    try:
+        async with httpx.AsyncClient(timeout=15, headers=headers, proxy=proxy) as client:
+            resp = await client.get(url)
+            if resp.status_code == 429:
+                raise ValueError("IG Public Web bị chặn (429).")
+            try:
+                data = resp.json().get("data", {}).get("shortcode_media", {})
+                if not data: raise ValueError("Không có data")
+                author = data.get("owner", {}).get("username", "")
+                desc = ""
+                try: desc = data.get("edge_media_to_caption", {}).get("edges", [])[0].get("node", {}).get("text", "")
+                except: pass
+                
+                return {
+                    "id": shortcode,
+                    "username": author,
+                    "desc": desc,
+                    "cover": data.get("display_url", ""),
+                    "url": f"https://www.instagram.com/p/{shortcode}/",
+                    "likes": data.get("edge_media_preview_like", {}).get("count", 0),
+                    "comments": data.get("edge_media_to_parent_comment", {}).get("count", 0),
+                    "views": data.get("video_view_count", 0),
+                }
+            except:
+                raise ValueError("Không thể lấy dữ liệu bài viết IG. Hãy dùng Instaloader/RapidAPI.")
+    except Exception as e:
+        if proxy: db.mark_proxy_failed(proxy)
+        raise e
 
 # ─── CAPTIONS ────────────────────────────────────────────────
 def build_ig_info_caption(info: dict) -> str:
