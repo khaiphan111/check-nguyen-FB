@@ -1,4 +1,4 @@
-import { IconListCheck, IconLogout, IconUser } from "@tabler/icons-react";
+import { IconListCheck, IconLogout, IconUser, IconTrash } from "@tabler/icons-react";
 import { useEffect, useState } from "react";
 import toast from "react-hot-toast";
 import { api } from "../lib/api";
@@ -22,6 +22,17 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
       setData(d);
     } catch (e: any) {
       toast.error(e.message);
+    }
+  }
+
+  async function handleDelete(type: string, target: string) {
+    if (!confirm("Bạn có chắc chắn muốn xóa mục này?")) return;
+    try {
+      await api(`/api/user/tracks/${type}/${encodeURIComponent(target)}`, "DELETE");
+      toast.success("Xóa thành công!");
+      loadData();
+    } catch (e: any) {
+      toast.error(e.message || "Có lỗi xảy ra");
     }
   }
 
@@ -106,6 +117,7 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                       <th className="p-2 border-b border-border">Followers</th>
                       <th className="p-2 border-b border-border">Videos</th>
                       <th className="p-2 border-b border-border">Trạng thái</th>
+                      <th className="p-2 border-b border-border text-right">Hành động</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -118,6 +130,11 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                           <span className={`px-2 py-0.5 rounded text-xs ${t.active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
                             {t.active ? "Đang chạy" : "Tạm dừng"}
                           </span>
+                        </td>
+                        <td className="p-2 text-right">
+                          <button onClick={() => handleDelete('tk_track', t.tiktok_username)} className="text-red-500 hover:text-red-700 p-1 bg-red-500/10 rounded">
+                            <IconTrash size={16} />
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -149,6 +166,7 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                       <th className="p-2 border-b border-border">Lượt xem</th>
                       <th className="p-2 border-b border-border">Likes</th>
                       <th className="p-2 border-b border-border">Trạng thái</th>
+                      <th className="p-2 border-b border-border text-right">Hành động</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -162,6 +180,11 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                           <span className={`px-2 py-0.5 rounded text-xs ${t.active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
                             {t.active ? "Đang chạy" : "Tạm dừng"}
                           </span>
+                        </td>
+                        <td className="p-2 text-right">
+                          <button onClick={() => handleDelete('tk_video', t.video_id)} className="text-red-500 hover:text-red-700 p-1 bg-red-500/10 rounded">
+                            <IconTrash size={16} />
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -192,6 +215,7 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                       <th className="p-2 border-b border-border">Followers</th>
                       <th className="p-2 border-b border-border">Posts</th>
                       <th className="p-2 border-b border-border">Trạng thái</th>
+                      <th className="p-2 border-b border-border text-right">Hành động</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -204,6 +228,11 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                           <span className={`px-2 py-0.5 rounded text-xs ${t.active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
                             {t.active ? "Đang chạy" : "Tạm dừng"}
                           </span>
+                        </td>
+                        <td className="p-2 text-right">
+                          <button onClick={() => handleDelete('ig_track', t.ig_username)} className="text-red-500 hover:text-red-700 p-1 bg-red-500/10 rounded">
+                            <IconTrash size={16} />
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -235,6 +264,7 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                       <th className="p-2 border-b border-border">Views</th>
                       <th className="p-2 border-b border-border">Likes</th>
                       <th className="p-2 border-b border-border">Trạng thái</th>
+                      <th className="p-2 border-b border-border text-right">Hành động</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -248,6 +278,11 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                           <span className={`px-2 py-0.5 rounded text-xs ${t.active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
                             {t.active ? "Đang chạy" : "Tạm dừng"}
                           </span>
+                        </td>
+                        <td className="p-2 text-right">
+                          <button onClick={() => handleDelete('ig_video', t.post_id)} className="text-red-500 hover:text-red-700 p-1 bg-red-500/10 rounded">
+                            <IconTrash size={16} />
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -278,6 +313,7 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                       <th className="p-2 border-b border-border">Ghi chú</th>
                       <th className="p-2 border-b border-border">Trạng thái</th>
                       <th className="p-2 border-b border-border">Hoạt động</th>
+                      <th className="p-2 border-b border-border text-right">Hành động</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -292,6 +328,11 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                           <span className={`px-2 py-0.5 rounded text-xs ${t.active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
                             {t.active ? "Đang chạy" : "Tạm dừng"}
                           </span>
+                        </td>
+                        <td className="p-2 text-right">
+                          <button onClick={() => handleDelete('fb_watch', t.uid)} className="text-red-500 hover:text-red-700 p-1 bg-red-500/10 rounded">
+                            <IconTrash size={16} />
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -323,6 +364,7 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                       <th className="p-2 border-b border-border">Comments</th>
                       <th className="p-2 border-b border-border">Shares</th>
                       <th className="p-2 border-b border-border">Trạng thái</th>
+                      <th className="p-2 border-b border-border text-right">Hành động</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -336,6 +378,11 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                           <span className={`px-2 py-0.5 rounded text-xs ${t.active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
                             {t.active ? "Đang chạy" : "Tạm dừng"}
                           </span>
+                        </td>
+                        <td className="p-2 text-right">
+                          <button onClick={() => handleDelete('fb_track', t.post_id)} className="text-red-500 hover:text-red-700 p-1 bg-red-500/10 rounded">
+                            <IconTrash size={16} />
+                          </button>
                         </td>
                       </tr>
                     ))}

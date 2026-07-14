@@ -394,6 +394,30 @@ async def verify_bot(body: TokenIn, _=Depends(auth)):
         raise HTTPException(status_code=400, detail="Token không hợp lệ")
     return {"ok": True, "username": username}
 
+@router.delete("/user/tracks/{type}/{target}")
+def user_delete_track(type: str, target: str, token: str = Header(default="")):
+    username = db.verify_magic_link(token)
+    if not username:
+        raise HTTPException(status_code=401, detail="Chưa đăng nhập")
+    tg_id = int(username)
+    
+    if type == "fb_watch":
+        db.remove_watch(tg_id, target)
+    elif type == "fb_track":
+        db.remove_fb_post_track(tg_id, target)
+    elif type == "tk_track":
+        db.remove_track(tg_id, target)
+    elif type == "tk_video":
+        db.remove_video_track(tg_id, target)
+    elif type == "ig_track":
+        db.remove_ig_track(tg_id, target)
+    elif type == "ig_video":
+        db.remove_ig_video_track(tg_id, target)
+    else:
+        raise HTTPException(400, "Invalid type")
+    return {"ok": True}
+
+
 
 @router.get("/prereq")
 async def prereq(_=Depends(auth)):
