@@ -2,14 +2,17 @@
 import socket
 import threading
 import webbrowser
+import os
+import urllib.request
+import time
 
 import uvicorn
 
 from app.config import APP_NAME, APP_VERSION
 from app.main import app
 
-HOST = "127.0.0.1"
-
+# Khi chạy trên Render, HOST phải là 0.0.0.0 để nhận traffic
+HOST = os.getenv("HOST", "0.0.0.0" if os.getenv("RENDER") else "127.0.0.1")
 
 def _free_port(start: int = 8000) -> int:
     for p in range(start, start + 30):
@@ -21,15 +24,13 @@ def _free_port(start: int = 8000) -> int:
                 continue
     return start
 
-
-PORT = _free_port(8000)
-
-
-import urllib.request
-import time
+# Ưu tiên lấy PORT từ biến môi trường (Render tự cấp)
+PORT = int(os.getenv("PORT", _free_port(8000)))
 
 def _open():
-    url = f"http://{HOST}:{PORT}"
+    if os.getenv("RENDER"): return # Không mở trình duyệt trên Render
+    
+    url = f"http://127.0.0.1:{PORT}"
     for _ in range(30):
         try:
             urllib.request.urlopen(url + "/api/health", timeout=1)
@@ -38,7 +39,6 @@ def _open():
         except Exception:
             time.sleep(1)
     webbrowser.open(url)
-
 
 if __name__ == "__main__":
     print(f"{APP_NAME} v{APP_VERSION} - http://{HOST}:{PORT}")
