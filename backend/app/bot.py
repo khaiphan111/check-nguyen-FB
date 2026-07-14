@@ -1497,11 +1497,12 @@ class ZaloBotManager:
             await self.cmd_phatcode(chat_id, text)
         elif txt_lower.startswith("/web"):
             token = db.create_magic_link(int(chat_id))
-            url = f"http://localhost:8000/auth?token={token}"
+            web_domain = db.get_setting("web_domain", "http://127.0.0.1:8000")
+            url = f"{web_domain.rstrip('/')}/auth?token={token}"
             kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="🌐 Đăng nhập Web", url=url)
             ]])
-            await self.send_message(chat_id, "🔗 Bấm vào nút bên dưới để tự động đăng nhập vào Web (Link có hiệu lực 5 phút):", reply_markup=kb)
+            await self.send_message(chat_id, "🔗 Bấm vào nút bên dưới để tự động đăng nhập vào Web:", reply_markup=kb)
         else:
             await self.send_message(chat_id, f"💡 Zalo Chat ID của bạn: {chat_id}\n\nLệnh có sẵn:\n- Copy Chat ID dán vào web để nhận thông báo\n- Phát Code: /phatcode <ID> <SỐ TIỀN>\n- Cộng thẳng: /topup <ID> <SỐ TIỀN>\n- Bảng điều khiển Web: /web")
 
