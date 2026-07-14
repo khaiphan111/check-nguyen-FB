@@ -154,7 +154,7 @@ async def cmd_web(msg: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="🌐 Đăng nhập Web", url=url)
     ]])
-    await msg.answer("🔗 Bấm vào nút bên dưới để tự động đăng nhập vào Web (Link có hiệu lực 5 phút):", reply_markup=kb)
+    await msg.answer("🔗 Bấm vào nút bên dưới để tự động đăng nhập vào Web:", reply_markup=kb)
 
 # ─── PROCESS TIKTOK CHECK ─────────────────────────────────────
 async def process_tiktok_check(msg: Message, username: str):
