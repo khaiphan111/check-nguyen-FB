@@ -24,35 +24,42 @@ app.add_middleware(
 app.include_router(api_router)
 
 
+import asyncio
+
 @app.on_event("startup")
 async def on_startup():
-    print("DEBUG: Start init_db")
+    print("DEBUG: Start init_db", flush=True)
     db.init_db()
-    print("DEBUG: Start migrate_db")
+    print("DEBUG: Start migrate_db", flush=True)
     db.migrate_db()
     
-    token = db.get_setting("bot_token")
-    zalo_token = db.get_setting("zalo_bot_token")
-    
-    started_any = False
-    print(f"DEBUG: bot_token={bool(token)}, zalo_token={bool(zalo_token)}")
-    if token and db.get_setting("setup_done") == "1":
-        print("DEBUG: Start manager.start(token)")
-        if await manager.start(token):
-            started_any = True
-            
-    if zalo_token:
-        print("DEBUG: Start zalo_manager.start(zalo_token)")
-        if await zalo_manager.start(zalo_token):
-            started_any = True
-            
-    print("DEBUG: Start admin_manager.start()")
-    await admin_manager.start()
-            
-    if started_any:
-        print("DEBUG: Start poller.start()")
-        poller.start()
-    print("DEBUG: Finish on_startup")
+    async def start_services():
+        token = db.get_setting("bot_token")
+        zalo_token = db.get_setting("zalo_bot_token")
+        
+        started_any = False
+        print(f"DEBUG: bot_token={bool(token)}, zalo_token={bool(zalo_token)}", flush=True)
+        if token and db.get_setting("setup_done") == "1":
+            print("DEBUG: Start manager.start(token)", flush=True)
+            if await manager.start(token):
+                started_any = True
+                
+        if zalo_token:
+            print("DEBUG: Start zalo_manager.start(zalo_token)", flush=True)
+            if await zalo_manager.start(zalo_token):
+                started_any = True
+                
+        print("DEBUG: Start admin_manager.start()", flush=True)
+        await admin_manager.start()
+                
+        if started_any:
+            print("DEBUG: Start poller.start()", flush=True)
+            poller.start()
+        print("DEBUG: Finish start_services", flush=True)
+
+    # Khởi chạy dưới nền để Uvicorn có thể mở port ngay lập tức
+    asyncio.create_task(start_services())
+    print("DEBUG: Finish on_startup", flush=True)
 
 
 @app.on_event("shutdown")
