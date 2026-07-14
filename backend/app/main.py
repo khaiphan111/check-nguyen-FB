@@ -26,25 +26,33 @@ app.include_router(api_router)
 
 @app.on_event("startup")
 async def on_startup():
+    print("DEBUG: Start init_db")
     db.init_db()
+    print("DEBUG: Start migrate_db")
     db.migrate_db()
     
     token = db.get_setting("bot_token")
     zalo_token = db.get_setting("zalo_bot_token")
     
     started_any = False
+    print(f"DEBUG: bot_token={bool(token)}, zalo_token={bool(zalo_token)}")
     if token and db.get_setting("setup_done") == "1":
+        print("DEBUG: Start manager.start(token)")
         if await manager.start(token):
             started_any = True
             
     if zalo_token:
+        print("DEBUG: Start zalo_manager.start(zalo_token)")
         if await zalo_manager.start(zalo_token):
             started_any = True
             
+    print("DEBUG: Start admin_manager.start()")
     await admin_manager.start()
             
     if started_any:
+        print("DEBUG: Start poller.start()")
         poller.start()
+    print("DEBUG: Finish on_startup")
 
 
 @app.on_event("shutdown")

@@ -42,6 +42,7 @@ class PgCursor:
 class PgConnection:
     def __init__(self):
         self.conn = psycopg2.connect(SUPABASE_URL)
+        self.conn.autocommit = True
         self.row_factory = None
     def check_conn(self):
         try:
@@ -49,6 +50,7 @@ class PgConnection:
                 cur.execute('SELECT 1')
         except:
             self.conn = psycopg2.connect(SUPABASE_URL)
+            self.conn.autocommit = True
     def execute(self, sql, params=()):
         self.check_conn()
         return PgCursor(self.conn).execute(sql, params)
@@ -56,7 +58,8 @@ class PgConnection:
         self.check_conn()
         return PgCursor(self.conn).executescript(sql)
     def commit(self):
-        self.conn.commit()
+        # self.conn.commit()
+        pass
 
 _lock = threading.Lock()
 _pg_conn = None
