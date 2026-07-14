@@ -185,6 +185,8 @@ export default function App() {
         {tab === "dashboard" && <Dashboard status={status} onRefresh={refreshStatus} />}
         {tab === "watches" && <Watches />}
         {tab === "tiktok" && <Tiktok />}
+        {tab === "youtube" && <Youtube />}
+        {tab === "zalo" && <Zalo />}
         {tab === "instagram" && <Instagram />}
         {tab === "users" && <Users />}
         {tab === "codes" && <Codes />}
