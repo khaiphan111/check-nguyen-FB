@@ -66,7 +66,7 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
       </header>
 
       <main className="p-6 flex-1 flex flex-col gap-6 max-w-6xl mx-auto w-full">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm text-muted-foreground font-normal">Đang theo dõi FB Live/Die</CardTitle>
@@ -99,6 +99,15 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
               <div className="text-2xl font-bold">{(data?.tk_videos?.length || 0) + (data?.ig_videos?.length || 0) + (data?.yt_videos?.length || 0)}</div>
             </CardContent>
           </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-muted-foreground font-normal">Zalo đang theo dõi</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{data?.zalo_tracks?.length || 0}</div>
+            </CardContent>
+          </Card>
+
         </div>
 
         <Card className="flex-1">
@@ -488,6 +497,49 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
             )}
           </CardContent>
         </Card>
+
+      
+        {data?.zalo_tracks?.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Danh sách SĐT Zalo đang theo dõi</CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-muted text-muted-foreground">
+                  <tr>
+                    <th className="p-3">SĐT</th>
+                    <th className="p-3">Tên Zalo</th>
+                    <th className="p-3">Trạng thái</th>
+                    <th className="p-3">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.zalo_tracks.map((t: any) => (
+                    <tr key={t.id} className="border-b">
+                      <td className="p-3">{t.phone}</td>
+                      <td className="p-3 font-semibold">{t.name || "-"}</td>
+                      <td className="p-3">
+                        <span className={`px-2 py-1 rounded text-xs font-semibold ${t.status === "LIVE" ? "bg-live/20 text-live" : "bg-die/20 text-die"}`}>
+                          {t.status}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <button
+                          onClick={() => handleDelete("zalo", t.phone)}
+                          className="text-red-500 hover:text-red-700"
+                          title="Xóa SĐT Zalo"
+                        >
+                          <IconTrash size={18} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        )}
 
       </main>
     </div>

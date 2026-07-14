@@ -141,6 +141,7 @@ def user_analytics(tg_id: int = Depends(user_auth)):
     tk_videos = [dict(r) for r in c.execute("SELECT * FROM video_tracks WHERE tg_user_id=?", (tg_id,)).fetchall()]
     yt_tracks = [dict(r) for r in c.execute("SELECT * FROM yt_tracks WHERE tg_user_id=?", (tg_id,)).fetchall()]
     yt_videos = [dict(r) for r in c.execute("SELECT * FROM yt_video_tracks WHERE tg_user_id=?", (tg_id,)).fetchall()]
+    zalo_tracks = [dict(r) for r in c.execute("SELECT * FROM zalo_tracks WHERE tg_user_id=?", (tg_id,)).fetchall()]
     
     return {
         "ok": True,
@@ -154,6 +155,7 @@ def user_analytics(tg_id: int = Depends(user_auth)):
         "tk_videos": tk_videos,
         "yt_tracks": yt_tracks,
         "yt_videos": yt_videos,
+        "zalo_tracks": zalo_tracks,
     }
 
 
@@ -809,5 +811,68 @@ def api_admin_delete_yt_video_track(track_id: int, _=Depends(auth)):
     with db._lock:
         c = db.get_conn()
         c.execute("DELETE FROM yt_video_tracks WHERE id=?", (track_id,))
+        c.commit()
+    return {"ok": True}
+
+# --- ZALO ENDPOINTS ---
+@router.get("/zalo-tracks")
+def api_get_zalo_tracks(user=Depends(auth)):
+    return db.user_zalo_tracks(user["tg_id"])
+
+@router.post("/zalo-tracks")
+async def api_add_zalo_track(body: dict, user=Depends(auth)):
+    phone = body.get("phone", "").strip()
+    if not phone: raise HTTPException(400, "Thiếu SĐT")
+    
+    vip_level = user.get("vip_level", 0)
+    try: max_limit = int(db.get_setting(f"vip{vip_level}_limit", [5, 50, 200, 1000][vip_level if vip_level <= 3 else 3]))
+    except: max_limit = [5, 50, 200, 1000][vip_level if vip_level <= 3 else 3]
+    
+    with db._lock: 
+        count = db.get_conn().execute("SELECT COUNT(*) FROM tracks WHERE tg_user_id=?", (user["tg_id"],)).fetchone()[0]
+        z_count = db.get_conn().execute("SELECT COUNT(*) FROM zalo_tracks WHERE tg_user_id=?", (user["tg_id"],)).fetchone()[0]
+    
+    if count + z_count >= max_limit:
+        raise HTTPException(400, f"Giới hạn hạng VIP của bạn là {max_limit} mục.")
+        
+    ok, err = db.check_daily_limit(user["tg_id"])
+    if not ok: raise HTTPException(400, err)
+    
+    cookie = db.get_setting("zalo_cookie", "")
+    imei = db.get_setting("zalo_imei", "")
+    from app.zalo_checker import check_zalo_phone
+    res = await check_zalo_phone(phone, cookie, imei)
+    
+    if res.get("live"):
+        status = "LIVE"
+        name = res.get("name", "")
+        avatar = res.get("avatar", "")
+    else:
+        status = "DIE"
+        name = ""
+        avatar = ""
+        # Still add it to track its state, unless user only wants to track existing?
+        # Let's add it anyway with DIE status.
+        
+    db.add_zalo_track(user["tg_id"], user["username"], phone, name, avatar, status)
+    db.add_log("track_add", f"Thêm Zalo {phone}", user["tg_id"], phone)
+    return {"ok": True, "res": res}
+
+@router.delete("/zalo-tracks/{phone}")
+def api_del_zalo_track(phone: str, user=Depends(auth)):
+    db.remove_zalo_track(user["tg_id"], phone)
+    db.add_log("track_remove", f"Xóa Zalo {phone}", user["tg_id"], phone)
+    return {"ok": True}
+
+@router.get("/admin/zalo-tracks")
+def api_admin_zalo_tracks(_=Depends(auth)):
+    with db._lock:
+        return db.get_conn().execute("SELECT * FROM zalo_tracks ORDER BY id DESC LIMIT 500").fetchall()
+
+@router.delete("/admin/zalo-tracks/{track_id}")
+def api_admin_delete_zalo_track(track_id: int, _=Depends(auth)):
+    with db._lock:
+        c = db.get_conn()
+        c.execute("DELETE FROM zalo_tracks WHERE id=?", (track_id,))
         c.commit()
     return {"ok": True}

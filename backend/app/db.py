@@ -321,6 +321,7 @@ def migrate_db():
             "ALTER TABLE fb_post_tracks ADD COLUMN last_spike_alert_at BIGINT DEFAULT 0",
             "CREATE TABLE IF NOT EXISTS yt_tracks (id BIGSERIAL PRIMARY KEY, tg_user_id BIGINT DEFAULT 0, tg_username TEXT DEFAULT '', zalo_user_id TEXT DEFAULT '', yt_username TEXT NOT NULL, last_subscribers BIGINT DEFAULT 0, last_videos BIGINT DEFAULT 0, last_checked BIGINT DEFAULT 0, created_at BIGINT NOT NULL, active BIGINT DEFAULT 1, avatar_url TEXT DEFAULT '')",
             "CREATE TABLE IF NOT EXISTS yt_video_tracks (id BIGSERIAL PRIMARY KEY, tg_user_id BIGINT DEFAULT 0, tg_username TEXT DEFAULT '', zalo_user_id TEXT DEFAULT '', video_url TEXT NOT NULL, video_id TEXT NOT NULL, yt_username TEXT DEFAULT '', video_desc TEXT DEFAULT '', cover_url TEXT DEFAULT '', check_interval BIGINT DEFAULT 3600, last_views BIGINT DEFAULT 0, last_likes BIGINT DEFAULT 0, last_comments BIGINT DEFAULT 0, last_checked BIGINT DEFAULT 0, created_at BIGINT NOT NULL, active BIGINT DEFAULT 1)",
+            "CREATE TABLE IF NOT EXISTS zalo_tracks (id BIGSERIAL PRIMARY KEY, tg_user_id BIGINT DEFAULT 0, tg_username TEXT DEFAULT '', zalo_user_id TEXT DEFAULT '', phone TEXT NOT NULL, name TEXT DEFAULT '', avatar TEXT DEFAULT '', status TEXT DEFAULT 'LIVE', last_checked BIGINT DEFAULT 0, created_at BIGINT NOT NULL, active BIGINT DEFAULT 1)",
             "CREATE TABLE IF NOT EXISTS proxies (id BIGINT PRIMARY KEY AUTOINCREMENT, proxy_url TEXT UNIQUE NOT NULL, fail_count BIGINT DEFAULT 0, is_active BIGINT DEFAULT 1, created_at BIGINT)",
             "CREATE TABLE IF NOT EXISTS track_history (id BIGINT PRIMARY KEY AUTOINCREMENT, track_id BIGINT NOT NULL, platform TEXT NOT NULL, track_type TEXT NOT NULL, stat_value BIGINT DEFAULT 0, created_at BIGINT)"
         ]:
@@ -1151,3 +1152,38 @@ def update_yt_video_track(track_id: int, views: int, likes: int, comments: int):
         c.execute("UPDATE yt_video_tracks SET last_views=?, last_likes=?, last_comments=?, last_checked=? WHERE id=?", 
                   (views, likes, comments, now(), track_id))
         c.commit()
+
+# --- ZALO TRACKS ---
+def add_zalo_track(tg_user_id: int, tg_username: str, phone: str, name: str, avatar: str, status: str = "LIVE") -> None:
+    with _lock:
+        c = get_conn()
+        c.execute(
+            "INSERT INTO zalo_tracks(tg_user_id, tg_username, phone, name, avatar, status, created_at) VALUES(?,?,?,?,?,?,?)",
+            (tg_user_id, tg_username, phone, name, avatar, status, int(time.time()))
+        )
+        c.commit()
+
+def all_active_zalo_tracks() -> list:
+    with _lock:
+        return get_conn().execute("SELECT * FROM zalo_tracks WHERE active=1").fetchall()
+
+def get_zalo_track(track_id: int) -> Optional[dict]:
+    with _lock:
+        return get_conn().execute("SELECT * FROM zalo_tracks WHERE id=?", (track_id,)).fetchone()
+
+def update_zalo_track_status(track_id: int, status: str, name: str, avatar: str) -> None:
+    with _lock:
+        c = get_conn()
+        c.execute("UPDATE zalo_tracks SET status=?, name=?, avatar=?, last_checked=? WHERE id=?", (status, name, avatar, int(time.time()), track_id))
+        c.commit()
+
+def user_zalo_tracks(tg_user_id: int) -> list:
+    with _lock:
+        return get_conn().execute("SELECT * FROM zalo_tracks WHERE tg_user_id=? ORDER BY id DESC", (tg_user_id,)).fetchall()
+
+def remove_zalo_track(tg_user_id: int, phone: str) -> bool:
+    with _lock:
+        c = get_conn()
+        res = c.execute("DELETE FROM zalo_tracks WHERE tg_user_id=? AND phone=?", (tg_user_id, phone))
+        c.commit()
+        return res.rowcount > 0

@@ -638,3 +638,36 @@ async def _poll_yt():
         except Exception as e:
             pass
         await asyncio.sleep(60)
+
+# --- ZALO POLLER ---
+async def _poll_zalo():
+    from app.zalo_checker import check_zalo_phone
+    while True:
+        try:
+            tracks = db.all_active_zalo_tracks()
+            cookie = db.get_setting("zalo_cookie", "")
+            imei = db.get_setting("zalo_imei", "")
+            
+            for t in tracks:
+                try:
+                    if not _is_user_active(t["tg_user_id"]): continue
+                    
+                    res = await check_zalo_phone(t["phone"], cookie, imei)
+                    
+                    new_status = "LIVE" if res.get("live") else "DIE"
+                    old_status = t["status"]
+                    
+                    if old_status != new_status:
+                        db.add_log("zalo_status_change", f"Zalo {t['phone']}: {old_status} -> {new_status}", t["tg_user_id"], t["phone"])
+                        icon = "✅" if new_status == "LIVE" else "❌"
+                        name_str = f"\nTên Zalo: <b>{res.get('name', '')}</b>" if res.get('name') else ""
+                        msg = f"{icon} SĐT Zalo <b>{t['phone']}</b> đã chuyển sang trạng thái <b>{new_status}</b>!{name_str}"
+                        await _bot.send_message(t["tg_user_id"], msg, parse_mode="HTML")
+                        
+                    db.update_zalo_track_status(t["id"], new_status, res.get("name", t["name"]), res.get("avatar", t["avatar"]))
+                except Exception as e:
+                    pass
+                await asyncio.sleep(5) # Delay 5 seconds between each check
+        except Exception as e:
+            pass
+        await asyncio.sleep(60)

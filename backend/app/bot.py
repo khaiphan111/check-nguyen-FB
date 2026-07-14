@@ -1672,3 +1672,69 @@ async def on_trackvyt(msg: Message, command: CommandObject):
         await wait.edit_text(f"✅ Đã thêm video YouTube <b>{res['id']}</b> vào danh sách theo dõi!")
     except Exception as e:
         await wait.edit_text(f"❌ Lỗi: {str(e)}")
+
+# --- ZALO TRACKING COMMANDS ---
+from app.zalo_checker import check_zalo_phone
+
+@router.message(Command("zalo"))
+async def on_zalo(msg: Message, command: CommandObject):
+    phone = command.args
+    if not phone:
+        await msg.answer("💡 Gõ /zalo <sđt> để kiểm tra nhanh SĐT Zalo.")
+        return
+        
+    wait = await msg.answer("⏳ Đang kiểm tra Zalo...")
+    try:
+        cookie = db.get_setting("zalo_cookie", "")
+        imei = db.get_setting("zalo_imei", "")
+        res = await check_zalo_phone(phone, cookie, imei)
+        if res.get("live"):
+            await wait.edit_text(f"✅ <b>LIVE</b>\\nSĐT: {phone}\\nTên Zalo: <b>{res['name']}</b>", parse_mode="HTML")
+        else:
+            await wait.edit_text(f"❌ <b>DIE / KHÔNG TÌM THẤY</b>\\nSĐT: {phone}\\nLỗi: {res.get('error', '')}", parse_mode="HTML")
+    except Exception as e:
+        await wait.edit_text(f"❌ Lỗi: {str(e)}")
+
+@router.message(Command("trackzalo"))
+async def on_trackzalo(msg: Message, command: CommandObject):
+    phone = command.args
+    if not phone:
+        await msg.answer("💡 Gõ /trackzalo <sđt> để theo dõi biến động SĐT Zalo.")
+        return
+        
+    user = db.get_user(msg.chat.id)
+    vip_level = user.get("vip_level", 0) if user else 0
+    try: max_limit = int(db.get_setting(f"vip{vip_level}_limit", [5, 50, 200, 1000][vip_level if vip_level <= 3 else 3]))
+    except: max_limit = [5, 50, 200, 1000][vip_level if vip_level <= 3 else 3]
+    
+    with db._lock: count = db.get_conn().execute("SELECT COUNT(*) FROM tracks WHERE tg_user_id=?", (msg.chat.id,)).fetchone()[0]
+    with db._lock: z_count = db.get_conn().execute("SELECT COUNT(*) FROM zalo_tracks WHERE tg_user_id=?", (msg.chat.id,)).fetchone()[0]
+    if count + z_count >= max_limit:
+        await msg.answer(f"❌ <b>Giới hạn hạng VIP!</b>\\nHạng của bạn chỉ cho phép tối đa <b>{max_limit}</b> mục.", parse_mode="HTML")
+        return
+        
+    wait = await msg.answer("⏳ Đang xử lý theo dõi SĐT Zalo...")
+    try:
+        ok, err = db.check_daily_limit(msg.chat.id)
+        if not ok:
+            await wait.edit_text(f"❌ {err}")
+            return
+            
+        cookie = db.get_setting("zalo_cookie", "")
+        imei = db.get_setting("zalo_imei", "")
+        res = await check_zalo_phone(phone, cookie, imei)
+        
+        if res.get("live"):
+            status = "LIVE"
+            name = res.get("name", "")
+            avatar = res.get("avatar", "")
+        else:
+            status = "DIE"
+            name = ""
+            avatar = ""
+            
+        db.add_zalo_track(msg.chat.id, msg.from_user.username or msg.from_user.full_name, phone, name, avatar, status)
+        db.add_log("track_add", f"Thêm Zalo {phone}", msg.chat.id, phone)
+        await wait.edit_text(f"✅ Đã thêm SĐT Zalo <b>{phone}</b> vào danh sách theo dõi!\\nTrạng thái hiện tại: {status}", parse_mode="HTML")
+    except Exception as e:
+        await wait.edit_text(f"❌ Lỗi: {str(e)}")

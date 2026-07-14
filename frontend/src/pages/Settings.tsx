@@ -99,6 +99,33 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
 
       <Card>
         <CardHeader>
+          
+      <Card>
+        <CardHeader>
+          <CardTitle>Cấu hình Zalo Clone (Check SĐT)</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="grid gap-2">
+            <Label>Zalo Cookie</Label>
+            <Input
+              value={s.zalo_cookie || ""}
+              onChange={(e) => up("zalo_cookie", e.target.value)}
+              placeholder="zpw_sek=...; Cookie từ chat.zalo.me"
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label>Zalo IMEI</Label>
+            <Input
+              value={s.zalo_imei || ""}
+              onChange={(e) => up("zalo_imei", e.target.value)}
+              placeholder="IMEI lấy từ Local Storage"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Điều kiện hoạt động</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-2">
