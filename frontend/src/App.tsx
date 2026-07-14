@@ -89,6 +89,21 @@ export default function App() {
   }
 
   if (!authed) {
+    const hostname = window.location.hostname;
+    const isAdminDomain = hostname.startsWith("admin.") || hostname.startsWith("quanly.") || hostname === "localhost" || hostname === "127.0.0.1";
+    
+    if (!isAdminDomain) {
+      return (
+        <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+          <IconInfoCircle size={48} className="text-muted-foreground mb-4" />
+          <h1 className="text-xl font-bold mb-2 text-center">Khu vực hạn chế</h1>
+          <p className="text-muted-foreground text-center max-w-md">
+            Vui lòng sử dụng lệnh <span className="font-mono bg-muted px-1 py-0.5 rounded">/web</span> trên Bot Telegram để lấy liên kết đăng nhập an toàn.
+          </p>
+        </div>
+      );
+    }
+
     return (
       <>
         <Toaster position="top-right" />

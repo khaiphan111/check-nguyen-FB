@@ -144,6 +144,7 @@ def user_analytics(tg_id: int = Depends(user_auth)):
         "ok": True,
         "live": live,
         "die": die,
+        "fb_watches": user_watches,
         "fb_tracks": fb_tracks,
         "ig_tracks": ig_tracks,
         "ig_videos": ig_videos,

@@ -25,11 +25,19 @@ def _free_port(start: int = 8000) -> int:
 PORT = _free_port(8000)
 
 
+import urllib.request
+import time
+
 def _open():
-    try:
-        webbrowser.open(f"http://{HOST}:{PORT}")
-    except Exception:
-        pass
+    url = f"http://{HOST}:{PORT}"
+    for _ in range(30):
+        try:
+            urllib.request.urlopen(url + "/api/health", timeout=1)
+            webbrowser.open(url)
+            return
+        except Exception:
+            time.sleep(1)
+    webbrowser.open(url)
 
 
 if __name__ == "__main__":

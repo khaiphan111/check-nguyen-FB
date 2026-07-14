@@ -103,20 +103,20 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                   <thead className="bg-muted">
                     <tr>
                       <th className="p-2 border-b border-border">Username</th>
-                      <th className="p-2 border-b border-border">Follower</th>
-                      <th className="p-2 border-b border-border">Likes</th>
+                      <th className="p-2 border-b border-border">Followers</th>
+                      <th className="p-2 border-b border-border">Videos</th>
                       <th className="p-2 border-b border-border">Trạng thái</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.tk_tracks.map((t: any) => (
                       <tr key={t.id} className="border-b border-border last:border-0 hover:bg-muted/50">
-                        <td className="p-2 font-medium">@{t.tiktok_id}</td>
-                        <td className="p-2">{new Intl.NumberFormat().format(t.last_follower)}</td>
-                        <td className="p-2">{new Intl.NumberFormat().format(t.last_likes)}</td>
+                        <td className="p-2 font-medium">@{t.tiktok_username}</td>
+                        <td className="p-2">{new Intl.NumberFormat().format(t.last_followers || 0)}</td>
+                        <td className="p-2">{new Intl.NumberFormat().format(t.last_videos || 0)}</td>
                         <td className="p-2">
-                          <span className={`px-2 py-0.5 rounded text-xs ${t.is_active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
-                            {t.is_active ? "Đang chạy" : "Tạm dừng"}
+                          <span className={`px-2 py-0.5 rounded text-xs ${t.active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
+                            {t.active ? "Đang chạy" : "Tạm dừng"}
                           </span>
                         </td>
                       </tr>
@@ -125,8 +125,226 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
                 </table>
               </div>
             ) : (
-              <div className="text-center py-10 text-muted-foreground">
-                Bạn chưa theo dõi kênh TikTok nào. Dùng lệnh /track trong bot để bắt đầu.
+              <div className="text-center py-6 text-muted-foreground">
+                Bạn chưa theo dõi tài khoản TikTok nào.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="flex-1">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <IconListCheck size={20} /> Danh sách Video TikTok
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {data?.tk_videos?.length > 0 ? (
+              <div className="border border-border rounded overflow-hidden">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="p-2 border-b border-border">Username</th>
+                      <th className="p-2 border-b border-border">Video ID</th>
+                      <th className="p-2 border-b border-border">Lượt xem</th>
+                      <th className="p-2 border-b border-border">Likes</th>
+                      <th className="p-2 border-b border-border">Trạng thái</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.tk_videos.map((t: any) => (
+                      <tr key={t.id} className="border-b border-border last:border-0 hover:bg-muted/50">
+                        <td className="p-2 font-medium">@{t.tiktok_username || "N/A"}</td>
+                        <td className="p-2"><a href={t.video_url} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">{t.video_id}</a></td>
+                        <td className="p-2">{new Intl.NumberFormat().format(t.last_plays || 0)}</td>
+                        <td className="p-2">{new Intl.NumberFormat().format(t.last_likes || 0)}</td>
+                        <td className="p-2">
+                          <span className={`px-2 py-0.5 rounded text-xs ${t.active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
+                            {t.active ? "Đang chạy" : "Tạm dừng"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-6 text-muted-foreground">
+                Bạn chưa theo dõi Video TikTok nào.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="flex-1">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <IconListCheck size={20} /> Danh sách Instagram
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {data?.ig_tracks?.length > 0 ? (
+              <div className="border border-border rounded overflow-hidden">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="p-2 border-b border-border">Username</th>
+                      <th className="p-2 border-b border-border">Followers</th>
+                      <th className="p-2 border-b border-border">Posts</th>
+                      <th className="p-2 border-b border-border">Trạng thái</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.ig_tracks.map((t: any) => (
+                      <tr key={t.id} className="border-b border-border last:border-0 hover:bg-muted/50">
+                        <td className="p-2 font-medium">@{t.ig_username}</td>
+                        <td className="p-2">{new Intl.NumberFormat().format(t.last_followers || 0)}</td>
+                        <td className="p-2">{new Intl.NumberFormat().format(t.last_posts || 0)}</td>
+                        <td className="p-2">
+                          <span className={`px-2 py-0.5 rounded text-xs ${t.active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
+                            {t.active ? "Đang chạy" : "Tạm dừng"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-6 text-muted-foreground">
+                Bạn chưa theo dõi tài khoản Instagram nào.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="flex-1">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <IconListCheck size={20} /> Danh sách Bài viết / Video Instagram
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {data?.ig_videos?.length > 0 ? (
+              <div className="border border-border rounded overflow-hidden">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="p-2 border-b border-border">Username</th>
+                      <th className="p-2 border-b border-border">Post ID</th>
+                      <th className="p-2 border-b border-border">Views</th>
+                      <th className="p-2 border-b border-border">Likes</th>
+                      <th className="p-2 border-b border-border">Trạng thái</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.ig_videos.map((t: any) => (
+                      <tr key={t.id} className="border-b border-border last:border-0 hover:bg-muted/50">
+                        <td className="p-2 font-medium">@{t.ig_username || "N/A"}</td>
+                        <td className="p-2"><a href={t.post_url} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">{t.post_id}</a></td>
+                        <td className="p-2">{new Intl.NumberFormat().format(t.last_views || 0)}</td>
+                        <td className="p-2">{new Intl.NumberFormat().format(t.last_likes || 0)}</td>
+                        <td className="p-2">
+                          <span className={`px-2 py-0.5 rounded text-xs ${t.active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
+                            {t.active ? "Đang chạy" : "Tạm dừng"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-6 text-muted-foreground">
+                Bạn chưa theo dõi Bài viết / Video Instagram nào.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        
+        <Card className="flex-1">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <IconListCheck size={20} /> Danh sách FB Live/Die
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {data?.fb_watches?.length > 0 ? (
+              <div className="border border-border rounded overflow-hidden">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="p-2 border-b border-border">UID</th>
+                      <th className="p-2 border-b border-border">Ghi chú</th>
+                      <th className="p-2 border-b border-border">Trạng thái</th>
+                      <th className="p-2 border-b border-border">Hoạt động</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.fb_watches.map((t: any) => (
+                      <tr key={t.id} className="border-b border-border last:border-0 hover:bg-muted/50">
+                        <td className="p-2 font-medium">{t.uid}</td>
+                        <td className="p-2">{t.note}</td>
+                        <td className="p-2">
+                          {t.last_status === 'live' ? <span className="text-green-500 font-bold">Live</span> : (t.last_status === 'die' ? <span className="text-red-500 font-bold">Die</span> : t.last_status)}
+                        </td>
+                        <td className="p-2">
+                          <span className={`px-2 py-0.5 rounded text-xs ${t.active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
+                            {t.active ? "Đang chạy" : "Tạm dừng"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-6 text-muted-foreground">
+                Bạn chưa theo dõi FB Live/Die nào.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="flex-1">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <IconListCheck size={20} /> Danh sách Bài viết FB
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {data?.fb_tracks?.length > 0 ? (
+              <div className="border border-border rounded overflow-hidden">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-muted">
+                    <tr>
+                      <th className="p-2 border-b border-border">Post ID</th>
+                      <th className="p-2 border-b border-border">Likes</th>
+                      <th className="p-2 border-b border-border">Comments</th>
+                      <th className="p-2 border-b border-border">Shares</th>
+                      <th className="p-2 border-b border-border">Trạng thái</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.fb_tracks.map((t: any) => (
+                      <tr key={t.id} className="border-b border-border last:border-0 hover:bg-muted/50">
+                        <td className="p-2 font-medium"><a href={t.post_url} target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">{t.post_id}</a></td>
+                        <td className="p-2">{new Intl.NumberFormat().format(t.last_likes || 0)}</td>
+                        <td className="p-2">{new Intl.NumberFormat().format(t.last_comments || 0)}</td>
+                        <td className="p-2">{new Intl.NumberFormat().format(t.last_shares || 0)}</td>
+                        <td className="p-2">
+                          <span className={`px-2 py-0.5 rounded text-xs ${t.active ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
+                            {t.active ? "Đang chạy" : "Tạm dừng"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-center py-6 text-muted-foreground">
+                Bạn chưa theo dõi Bài viết FB nào.
               </div>
             )}
           </CardContent>

@@ -149,7 +149,8 @@ COMMANDS = [
 async def cmd_web(msg: Message):
     tg_id = msg.chat.id
     token = db.create_magic_link(tg_id)
-    url = f"https://botcheckv2.onrender.com/auth?token={token}"
+    web_domain = db.get_setting("web_domain", "http://127.0.0.1:8000")
+    url = f"{web_domain.rstrip('/')}/auth?token={token}"
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="🌐 Đăng nhập Web", url=url)
     ]])
