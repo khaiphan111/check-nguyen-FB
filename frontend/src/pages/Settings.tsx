@@ -99,9 +99,6 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
 
       <Card>
         <CardHeader>
-          
-      <Card>
-        <CardHeader>
           <CardTitle>Cấu hình Zalo Clone (Check SĐT)</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">

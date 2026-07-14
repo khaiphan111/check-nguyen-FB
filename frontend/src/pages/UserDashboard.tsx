@@ -28,7 +28,7 @@ export default function UserDashboard({ onLogout }: { onLogout: () => void }) {
   async function handleDelete(type: string, target: string) {
     if (!confirm("Bạn có chắc chắn muốn xóa mục này?")) return;
     try {
-      await api(`/api/user/tracks/${type}/${encodeURIComponent(target)}`, "DELETE");
+      await api(`/api/user/tracks/${type}/${encodeURIComponent(target)}`, { method: "DELETE" });
       toast.success("Xóa thành công!");
       loadData();
     } catch (e: any) {
