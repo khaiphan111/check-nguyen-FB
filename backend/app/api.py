@@ -787,14 +787,12 @@ def api_delete_yt_video_track(track_id: int, tg_id: int):
     return {"ok": True}
 
 @router.get("/admin/yt-tracks")
-def api_admin_yt_tracks(api_key: str):
-    if api_key != db.get_setting("api_key", config.DEFAULT_API_KEY): return []
+def api_admin_yt_tracks(_=Depends(auth)):
     with db._lock:
         return db.get_conn().execute("SELECT * FROM yt_tracks ORDER BY id DESC LIMIT 500").fetchall()
 
 @router.delete("/admin/yt-tracks/{track_id}")
-def api_admin_delete_yt_track(track_id: int, api_key: str):
-    if api_key != db.get_setting("api_key", config.DEFAULT_API_KEY): return {"ok": False}
+def api_admin_delete_yt_track(track_id: int, _=Depends(auth)):
     with db._lock:
         c = db.get_conn()
         c.execute("DELETE FROM yt_tracks WHERE id=?", (track_id,))
@@ -802,14 +800,12 @@ def api_admin_delete_yt_track(track_id: int, api_key: str):
     return {"ok": True}
 
 @router.get("/admin/yt-video-tracks")
-def api_admin_yt_video_tracks(api_key: str):
-    if api_key != db.get_setting("api_key", config.DEFAULT_API_KEY): return []
+def api_admin_yt_video_tracks(_=Depends(auth)):
     with db._lock:
         return db.get_conn().execute("SELECT * FROM yt_video_tracks ORDER BY id DESC LIMIT 500").fetchall()
 
 @router.delete("/admin/yt-video-tracks/{track_id}")
-def api_admin_delete_yt_video_track(track_id: int, api_key: str):
-    if api_key != db.get_setting("api_key", config.DEFAULT_API_KEY): return {"ok": False}
+def api_admin_delete_yt_video_track(track_id: int, _=Depends(auth)):
     with db._lock:
         c = db.get_conn()
         c.execute("DELETE FROM yt_video_tracks WHERE id=?", (track_id,))

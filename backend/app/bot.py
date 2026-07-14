@@ -1634,6 +1634,7 @@ async def on_trackyt(msg: Message, command: CommandObject):
             
         res = await fetch_yt_info(username)
         db.add_yt_track(msg.chat.id, msg.from_user.username or msg.from_user.full_name, res["username"], res["subscribers"], res["videos"], avatar=res["avatar"])
+        db.add_log("track_add", f"Thêm theo dõi YT @{res['username']}", msg.chat.id, res["username"])
         await wait.edit_text(f"✅ Đã thêm kênh <b>{res['username']}</b> vào danh sách theo dõi YouTube!")
     except Exception as e:
         await wait.edit_text(f"❌ Lỗi: {str(e)}")
@@ -1667,6 +1668,7 @@ async def on_trackvyt(msg: Message, command: CommandObject):
             
         res = await fetch_yt_video_info(url)
         db.add_yt_video_track(msg.chat.id, msg.from_user.username or msg.from_user.full_name, url, res["id"], res["username"], res["desc"], res["cover"], views=res["views"], likes=res["likes"], comments=res["comments"])
+        db.add_log("video_track_add", f"Thêm video YT {res['id']}", msg.chat.id, res.get("username",""))
         await wait.edit_text(f"✅ Đã thêm video YouTube <b>{res['id']}</b> vào danh sách theo dõi!")
     except Exception as e:
         await wait.edit_text(f"❌ Lỗi: {str(e)}")

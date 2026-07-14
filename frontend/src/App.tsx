@@ -26,6 +26,7 @@ import Settings from "./pages/Settings";
 import Users from "./pages/Users";
 import Watches from "./pages/Watches";
 import Tiktok from "./pages/Tiktok";
+import Youtube from "./pages/Youtube";
 import Instagram from "./pages/Instagram";
 import Codes from "./pages/Codes";
 import Broadcast from "./pages/Broadcast";
@@ -36,6 +37,7 @@ const NAV = [
   { key: "broadcast", label: "Chiến dịch", icon: IconUsers },
   { key: "watches", label: "Theo dõi FB", icon: IconListCheck },
   { key: "tiktok", label: "Tiktok", icon: IconListCheck },
+  { key: "youtube", label: "Youtube", icon: IconListCheck },
   { key: "instagram", label: "Instagram", icon: IconListCheck },
   { key: "users", label: "Người dùng", icon: IconUsers },
   { key: "codes", label: "Kho Code", icon: IconListCheck },
