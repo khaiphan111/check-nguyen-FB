@@ -655,8 +655,10 @@ async def on_track(msg: Message):
     # VIP Limit check
     user = db.get_user(msg.chat.id)
     vip_level = user.get("vip_level", 0) if user else 0
-    limits = {0: 5, 1: 50, 2: 200, 3: 1000}
-    max_limit = limits.get(vip_level, 5)
+    try:
+        max_limit = int(db.get_setting(f"vip{vip_level}_limit", [5, 50, 200, 1000][vip_level if vip_level <= 3 else 3]))
+    except:
+        max_limit = [5, 50, 200, 1000][vip_level if vip_level <= 3 else 3]
     with db._lock:
         count = db.get_conn().execute("SELECT COUNT(*) FROM tracks WHERE tg_user_id=?", (msg.chat.id,)).fetchone()[0]
     if count >= max_limit:
@@ -1018,9 +1020,11 @@ def _sub_active(user) -> bool:
 
 def _sub_text(user) -> str:
     if _sub_active(user):
+        if user["sub_until"] >= 9999999999:
+            return "VĨNH VIỄN"
         days_left = (user["sub_until"] - now()) // DAY
         return f"Còn hạn ({days_left} ngày)"
-    return "Chưa có / đã hết hạn"
+    return "Chưa có / Đã hết hạn"
 
 def status_caption(status: str, note: str, price, header: str = "") -> str:
     icon = "🟢" if status == "live" else "🔴"
@@ -1166,10 +1170,12 @@ async def on_vip(msg: Message):
     
     vip_level = user.get("vip_level", 0)
     vip_names = {0: "Thường (Free)", 1: "VIP 1", 2: "VIP 2", 3: "VIP 3"}
-    limits = {0: 5, 1: 50, 2: 200, 3: 1000}
+    try:
+        limit = int(db.get_setting(f"vip{vip_level}_limit", [5, 50, 200, 1000][vip_level if vip_level <= 3 else 3]))
+    except:
+        limit = [5, 50, 200, 1000][vip_level if vip_level <= 3 else 3]
     
     name = vip_names.get(vip_level, "Thường")
-    limit = limits.get(vip_level, 5)
     
     auto_renew_status = "Đang Bật 🟢" if user.get("auto_renew") == 1 else "Đang Tắt 🔴"
     
@@ -1178,6 +1184,7 @@ async def on_vip(msg: Message):
         f"━━━━━━━━━━━━━━━━━━\n\n"
         f"👤 Tài khoản: <b>{user.get('username') or user.get('full_name', '')}</b>\n"
         f"💎 Hạng hiện tại: <b>{name}</b>\n"
+        f"⏳ Hạn sử dụng: <b>{_sub_text(user)}</b>\n"
         f"📊 Giới hạn theo dõi: <b>{limit} mục</b>\n"
         f"🔄 Gia hạn tự động: <b>{auto_renew_status}</b>\n\n"
         f"💡 <i>Mẹo: Nhấn nút bên dưới để Bật/Tắt tính năng tự động gia hạn gói khi hết hạn (cần đủ số dư ví).</i>\n"
@@ -1577,3 +1584,89 @@ class ZaloBotManager:
 
 
 zalo_manager = ZaloBotManager()
+
+
+# --- YOUTUBE COMMANDS ---
+from app.yt import parse_yt_username, fetch_yt_info, build_yt_caption, parse_yt_video_id, fetch_yt_video_info, build_yt_video_caption
+
+@router.message(Command("yt"))
+async def on_yt(msg: Message, command: CommandObject):
+    username = command.args
+    if not username:
+        await msg.answer("💡 Gõ /yt <link_kenh_hoac_username> để xem thông tin kênh YouTube.")
+        return
+        
+    wait = await msg.answer("⏳ Đang lấy thông tin kênh YouTube...")
+    try:
+        username = parse_yt_username(username)
+        res = await fetch_yt_info(username)
+        cap = build_yt_caption(res)
+        await wait.edit_text(cap, disable_web_page_preview=True)
+    except Exception as e:
+        await wait.edit_text(f"❌ Lỗi: {str(e)}")
+
+@router.message(Command("trackyt"))
+async def on_trackyt(msg: Message, command: CommandObject):
+    username = command.args
+    if not username:
+        await msg.answer("💡 Gõ /trackyt <link_kenh> để theo dõi kênh YouTube.")
+        return
+        
+    user = db.get_user(msg.chat.id)
+    vip_level = user.get("vip_level", 0) if user else 0
+    try: max_limit = int(db.get_setting(f"vip{vip_level}_limit", [5, 50, 200, 1000][vip_level if vip_level <= 3 else 3]))
+    except: max_limit = [5, 50, 200, 1000][vip_level if vip_level <= 3 else 3]
+    with db._lock: count = db.get_conn().execute("SELECT COUNT(*) FROM tracks WHERE tg_user_id=?", (msg.chat.id,)).fetchone()[0]
+    with db._lock: yt_count = db.get_conn().execute("SELECT COUNT(*) FROM yt_tracks WHERE tg_user_id=?", (msg.chat.id,)).fetchone()[0]
+    if count + yt_count >= max_limit:
+        await msg.answer(f"❌ <b>Giới hạn hạng VIP!</b>\nHạng của bạn chỉ cho phép theo dõi tối đa <b>{max_limit}</b> mục.")
+        return
+        
+    wait = await msg.answer("⏳ Đang xử lý theo dõi YouTube...")
+    try:
+        username = parse_yt_username(username)
+        
+        # Check limit daily
+        ok, err = db.check_daily_limit(msg.chat.id)
+        if not ok:
+            await wait.edit_text(f"❌ {err}")
+            return
+            
+        res = await fetch_yt_info(username)
+        db.add_yt_track(msg.chat.id, msg.from_user.username or msg.from_user.full_name, res["username"], res["subscribers"], res["videos"], avatar=res["avatar"])
+        await wait.edit_text(f"✅ Đã thêm kênh <b>{res['username']}</b> vào danh sách theo dõi YouTube!")
+    except Exception as e:
+        await wait.edit_text(f"❌ Lỗi: {str(e)}")
+
+@router.message(Command("trackvyt"))
+async def on_trackvyt(msg: Message, command: CommandObject):
+    url = command.args
+    if not url:
+        await msg.answer("💡 Gõ /trackvyt <link_video_youtube> để theo dõi video.")
+        return
+        
+    user = db.get_user(msg.chat.id)
+    vip_level = user.get("vip_level", 0) if user else 0
+    try: max_limit = int(db.get_setting(f"vip{vip_level}_limit", [5, 50, 200, 1000][vip_level if vip_level <= 3 else 3]))
+    except: max_limit = [5, 50, 200, 1000][vip_level if vip_level <= 3 else 3]
+    with db._lock: count = db.get_conn().execute("SELECT COUNT(*) FROM tracks WHERE tg_user_id=?", (msg.chat.id,)).fetchone()[0]
+    with db._lock: yt_count = db.get_conn().execute("SELECT COUNT(*) FROM yt_video_tracks WHERE tg_user_id=?", (msg.chat.id,)).fetchone()[0]
+    if count + yt_count >= max_limit:
+        await msg.answer(f"❌ <b>Giới hạn hạng VIP!</b>\nHạng của bạn chỉ cho phép theo dõi tối đa <b>{max_limit}</b> mục.")
+        return
+        
+    wait = await msg.answer("⏳ Đang xử lý theo dõi video YouTube...")
+    try:
+        video_id = parse_yt_video_id(url)
+        
+        # Check limit daily
+        ok, err = db.check_daily_limit(msg.chat.id)
+        if not ok:
+            await wait.edit_text(f"❌ {err}")
+            return
+            
+        res = await fetch_yt_video_info(url)
+        db.add_yt_video_track(msg.chat.id, msg.from_user.username or msg.from_user.full_name, url, res["id"], res["username"], res["desc"], res["cover"], views=res["views"], likes=res["likes"], comments=res["comments"])
+        await wait.edit_text(f"✅ Đã thêm video YouTube <b>{res['id']}</b> vào danh sách theo dõi!")
+    except Exception as e:
+        await wait.edit_text(f"❌ Lỗi: {str(e)}")

@@ -72,8 +72,17 @@ async def check_uid(uid: str) -> dict:
             else:
                 result["avatar_url"] = avatar_url(uid)
             
-            # Logic check: Nếu có meta property="al:android:url" thì là nick đang LIVE
-            if 'al:android:url' in html or 'al:ios:url' in html:
+            # Logic check:
+            # - Nick LIVE sẽ có meta al:android:url hoặc og:type="profile" (kể cả khóa bảo vệ)
+            # - Nick DIE thường sẽ có chữ "This content isn't available right now", "Trang này không hiển thị"
+            
+            # Kiểm tra chắc chắn DIE
+            dead_texts = ["This content isn't available right now", "Trang này không hiển thị", "Tài khoản này đã bị vô hiệu hóa"]
+            is_dead = any(t in html for t in dead_texts)
+            
+            if is_dead:
+                result["alive"] = False
+            elif 'al:android:url' in html or 'al:ios:url' in html or 'property="og:type" content="profile"' in html or 'og:type" content="profile"' in html:
                 result["alive"] = True
             else:
                 result["alive"] = False

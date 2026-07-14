@@ -566,3 +566,54 @@ class FollowerPoller:
 
 
 poller = FollowerPoller()
+
+
+# --- YOUTUBE POLLER ---
+async def _poll_yt():
+    from app.yt import fetch_yt_info, fetch_yt_video_info
+    while True:
+        try:
+            tracks = db.all_active_yt_tracks()
+            for t in tracks:
+                try:
+                    if not _is_user_active(t["tg_user_id"]): continue
+                    
+                    res = await fetch_yt_info(t["yt_username"])
+                    old_subs = t["last_subscribers"]
+                    old_videos = t["last_videos"]
+                    
+                    if res["videos"] > old_videos and old_videos > 0:
+                        await _bot.send_message(t["tg_user_id"], f"🎥 Kênh YouTube <b>{res['username']}</b> vừa đăng video mới!\nHiện có: {res['videos']} video.", parse_mode="HTML")
+                        
+                    if abs(res["subscribers"] - old_subs) >= 1000 and old_subs > 0:
+                        icon = "📈" if res["subscribers"] > old_subs else "📉"
+                        await _bot.send_message(t["tg_user_id"], f"{icon} Kênh YouTube <b>{res['username']}</b> biến động sub!\nSub hiện tại: {res['subscribers']:,}", parse_mode="HTML")
+                        
+                    db.update_yt_track_status(t["id"], res["subscribers"], res["videos"])
+                except Exception as e:
+                    pass
+                await asyncio.sleep(2)
+                
+            v_tracks = db.all_active_yt_video_tracks()
+            for t in v_tracks:
+                try:
+                    if not _is_user_active(t["tg_user_id"]): continue
+                    # interval check
+                    if now() - t["last_checked"] < t["check_interval"]: continue
+                    
+                    res = await fetch_yt_video_info(t["video_id"])
+                    
+                    old_views = t["last_views"]
+                    if res["views"] > old_views and old_views > 0:
+                        diff = res["views"] - old_views
+                        if diff >= 5000:
+                            await _bot.send_message(t["tg_user_id"], f"👁️ Video YouTube <b>{res['username']}</b> tăng +{diff:,} views!\nHiện tại: {res['views']:,} views.", parse_mode="HTML")
+                            
+                    db.update_yt_video_track(t["id"], res["views"], res["likes"], res["comments"])
+                except Exception as e:
+                    pass
+                await asyncio.sleep(2)
+                
+        except Exception as e:
+            pass
+        await asyncio.sleep(60)
