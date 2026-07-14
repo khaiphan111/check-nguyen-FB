@@ -170,6 +170,17 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
               ID Nhóm để dùng lệnh miễn phí (bỏ qua kiểm tra hạn sử dụng/số dư).
             </p>
           </div>
+          <div className="flex flex-col gap-1.5 mt-2">
+            <Label>Domain Web (Dùng cho lệnh /web)</Label>
+            <Input
+              value={s.web_domain || ""}
+              onChange={(e) => up("web_domain", e.target.value)}
+              placeholder="VD: https://app.khaikhaizzy.indevs.in"
+            />
+            <p className="text-xs text-muted-foreground">
+              Link gửi cho khách khi họ gõ lệnh /web.
+            </p>
+          </div>
           <div className="flex flex-col gap-1.5">
             <Label>Zalo Bot Token (Tùy chọn)</Label>
             <Input
