@@ -143,6 +143,7 @@ COMMANDS = [
     BotCommand(command="ref",       description="Lấy link giới thiệu kiếm tiền"),
     BotCommand(command="help",      description="Hướng dẫn sử dụng"),
     BotCommand(command="web",       description="Đăng nhập Bảng điều khiển Web"),
+    BotCommand(command="hdcookie",  description="Hướng dẫn lấy Cookie các nền tảng"),
 ]
 
 @router.message(Command("web"))
@@ -612,7 +613,8 @@ async def on_help(msg: Message):
         "• /vip - Xem cấp độ VIP và đặc quyền\n"
         "• /mycodes - Xem kho mã quà tặng\n"
         "• /sub - Xem gói và mua gói\n"
-        "• /ref - Lấy link giới thiệu kiếm tiền\n\n"
+        "• /ref - Lấy link giới thiệu kiếm tiền\n"
+        "• /hdcookie - Hướng dẫn lấy Cookie (Dành cho Admin)\n\n"
         "<b>💻 BẢNG ĐIỀU KHIỂN WEB</b>\n"
         "• /web - Đăng nhập Web Dashboard không cần mật khẩu\n\n"
         "<b>1. TIKTOK COMMANDS</b>\n"
@@ -654,6 +656,27 @@ async def on_help(msg: Message):
         "• Facebook: facebook.com/khaitradecoin"
     )
     await msg.answer(help_text)
+
+@router.message(Command("hdcookie"))
+async def on_hdcookie(msg: Message):
+    text = (
+        "🍪 <b>HƯỚNG DẪN LẤY COOKIE CÁC NỀN TẢNG</b> 🍪\n\n"
+        "<b>1. ZALO (Lấy Cookie & IMEI)</b>\n"
+        "• Truy cập: <code>chat.zalo.me</code> trên máy tính (F12 hoặc Chuột phải -> Kiểm tra)\n"
+        "• Chọn tab <b>Network</b> (Mạng), F5 tải lại trang. Bấm vào một yêu cầu (request) bất kỳ, kéo xuống phần <b>Request Headers</b>, copy toàn bộ đoạn <code>Cookie: ...</code>\n"
+        "• Hoặc chọn tab <b>Application</b> (Ứng dụng) -> Cookies. Tìm khóa <code>zpw_sek</code> và copy giá trị.\n"
+        "• <b>Lấy IMEI:</b> Ở tab <b>Application</b> -> Local Storage -> tìm khóa <code>z_uuid</code>, đó chính là IMEI.\n\n"
+        "<b>2. FACEBOOK (Cookie)</b>\n"
+        "• Đăng nhập tài khoản Clone FB trên trình duyệt.\n"
+        "• F12 -> tab <b>Network</b> -> F5. Bấm vào request đầu tiên, kéo xuống <b>Request Headers</b> -> copy toàn bộ dòng <code>Cookie: c_user=...</code>\n"
+        "• Hoặc dùng tiện ích mở rộng (Extension) như <b>J2TEAM Security</b> hoặc <b>Get Token by Ninja</b> để copy nhanh.\n\n"
+        "<b>3. INSTAGRAM (Session Cookie)</b>\n"
+        "• Đăng nhập IG trên Web.\n"
+        "• F12 -> <b>Application</b> -> Cookies -> <code>https://www.instagram.com</code>\n"
+        "• Tìm khóa có tên là <code>sessionid</code> và copy giá trị của nó.\n\n"
+        "⚠️ <i>Lưu ý: Tuyệt đối KHÔNG chia sẻ Cookie/SessionID của tài khoản CHÍNH cho bất kỳ ai để tránh mất tài khoản. Chỉ nên dùng acc Clone/Phụ để lấy Cookie nạp vào Tool!</i>"
+    )
+    await msg.answer(text, parse_mode="HTML")
 
 
 @router.message(Command("tiktok"))
