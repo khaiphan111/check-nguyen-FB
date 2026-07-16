@@ -9,7 +9,7 @@ from . import db
 def get_yt_api():
     # Read API key from file if exists, else from db
     try:
-        with open("d:\\cac tool\\FB-Live-Die-Checker\\api ytb.txt", "r") as f:
+        with open("d:\\cac tool\\FB-Live-Die-Checker\\api ytb.txt", "r", encoding="utf-8-sig") as f:
             api_key = f.read().strip()
     except Exception:
         api_key = db.get_setting("yt_api_key", "")
