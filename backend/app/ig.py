@@ -127,12 +127,11 @@ async def _fetch_ig_post_rapidapi(shortcode: str) -> dict:
         }
 
 # ─── INSTALOADER METHOD ──────────────────────────────────────
-async def _fetch_ig_instaloader(username: str) -> dict:
+def _get_instaloader_instance():
     try: import instaloader
-    except ImportError: raise ValueError("Thư viện instaloader chưa được cài đặt. Hãy chạy pip install instaloader")
-    
-    session_str = db.get_setting("ig_session_cookie")
+    except ImportError: raise ValueError("Thư viện instaloader chưa được cài đặt.")
     L = instaloader.Instaloader(quiet=True)
+    session_str = db.get_setting("ig_session_cookie")
     if session_str:
         if "=" in session_str:
             from http.cookies import SimpleCookie
@@ -142,67 +141,101 @@ async def _fetch_ig_instaloader(username: str) -> dict:
                 L.context._session.cookies.set(key, morsel.value, domain=".instagram.com")
         else:
             L.context._session.cookies.set("sessionid", session_str, domain=".instagram.com")
+    return L
+
+def _attempt_ig_login(L):
+    ig_username = db.get_setting("ig_username")
+    ig_password = db.get_setting("ig_password")
+    if not ig_username or not ig_password:
+        raise ValueError("Cookie hết hạn/bị chặn và không có cấu hình tài khoản/mật khẩu để tự động đăng nhập.")
+    try:
+        L.login(ig_username, ig_password)
+        new_sessionid = L.context._session.cookies.get("sessionid", domain=".instagram.com")
+        if new_sessionid:
+            db.set_setting("ig_session_cookie", new_sessionid)
+        else:
+            cookies_dict = L.context._session.cookies.get_dict(domain=".instagram.com")
+            db.set_setting("ig_session_cookie", "; ".join([f"{k}={v}" for k, v in cookies_dict.items()]))
+    except Exception as e:
+        raise ValueError(f"Lỗi tự động đăng nhập Instagram: {e}")
+
+async def _fetch_ig_instaloader(username: str) -> dict:
+    try: import instaloader
+    except ImportError: raise ValueError("Thư viện instaloader chưa được cài đặt.")
+    L = _get_instaloader_instance()
     
     try:
         profile = instaloader.Profile.from_username(L.context, username)
-        return {
-            "uid": str(profile.userid),
-            "username": profile.username,
-            "full_name": profile.full_name,
-            "bio": profile.biography,
-            "verified": profile.is_verified,
-            "private": profile.is_private,
-            "avatar": profile.profile_pic_url,
-            "followers": profile.followers,
-            "following": profile.followees,
-            "posts": profile.mediacount,
-        }
+    except (instaloader.exceptions.LoginRequiredException, instaloader.exceptions.BadResponseException, instaloader.exceptions.ProfileNotExistsException):
+        _attempt_ig_login(L)
+        try:
+            profile = instaloader.Profile.from_username(L.context, username)
+        except Exception as e:
+            raise ValueError(f"Lỗi Instaloader (sau khi relogin): {e}")
     except Exception as e:
         raise ValueError(f"Lỗi Instaloader: {e}")
+
+    return {
+        "uid": str(profile.userid),
+        "username": profile.username,
+        "full_name": profile.full_name,
+        "bio": profile.biography,
+        "verified": profile.is_verified,
+        "private": profile.is_private,
+        "avatar": profile.profile_pic_url,
+        "followers": profile.followers,
+        "following": profile.followees,
+        "posts": profile.mediacount,
+    }
 
 async def _fetch_ig_post_instaloader(shortcode: str) -> dict:
     try: import instaloader
     except ImportError: raise ValueError("Thư viện instaloader chưa được cài đặt.")
-    
-    session_str = db.get_setting("ig_session_cookie")
-    L = instaloader.Instaloader(quiet=True)
-    if session_str:
-        if "=" in session_str:
-            from http.cookies import SimpleCookie
-            cookie = SimpleCookie()
-            cookie.load(session_str)
-            for key, morsel in cookie.items():
-                L.context._session.cookies.set(key, morsel.value, domain=".instagram.com")
-        else:
-            L.context._session.cookies.set("sessionid", session_str, domain=".instagram.com")
+    L = _get_instaloader_instance()
         
     try:
         post = instaloader.Post.from_shortcode(L.context, shortcode)
-        return {
-            "id": shortcode,
-            "username": post.owner_username,
-            "desc": post.caption or "",
-            "cover": post.url,
-            "url": f"https://www.instagram.com/p/{shortcode}/",
-            "likes": post.likes,
-            "comments": post.comments,
-            "views": post.video_view_count if post.is_video else 0,
-        }
+    except (instaloader.exceptions.LoginRequiredException, instaloader.exceptions.BadResponseException):
+        _attempt_ig_login(L)
+        try:
+            post = instaloader.Post.from_shortcode(L.context, shortcode)
+        except Exception as e:
+            raise ValueError(f"Lỗi Instaloader (sau khi relogin): {e}")
     except Exception as e:
         raise ValueError(f"Lỗi Instaloader: {e}")
 
+    return {
+        "id": shortcode,
+        "username": post.owner_username,
+        "desc": post.caption or "",
+        "cover": post.url,
+        "url": f"https://www.instagram.com/p/{shortcode}/",
+        "likes": post.likes,
+        "comments": post.comments,
+        "views": post.video_view_count if post.is_video else 0,
+    }
+
 # ─── PUBLIC METHOD (FALLBACK) ────────────────────────────────
 async def _fetch_ig_public(username: str) -> dict:
+    import asyncio
     # Public web endpoint thuong bi chan rat nhanh
     headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "X-IG-App-ID": "936619743392459",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
     }
     url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
     proxy = db.get_random_proxy()
     
     try:
-        async with httpx.AsyncClient(timeout=15, headers=headers, proxy=proxy) as client:
+        async with httpx.AsyncClient(timeout=20, headers=headers, proxy=proxy, follow_redirects=True) as client:
+            # Bước quan trọng: lấy cookie session từ trang chủ trước để giảm thiểu block
+            await client.get("https://www.instagram.com/")
+            await asyncio.sleep(2) # Tránh rate limit
+            
             resp = await client.get(url)
             if resp.status_code == 429:
                 raise ValueError("IG Public Web đang bị chặn (429). Hãy đổi sang dùng Instaloader hoặc RapidAPI trong Cấu Hình.")
@@ -230,13 +263,22 @@ async def _fetch_ig_public(username: str) -> dict:
         raise e
 
 async def _fetch_ig_post_public(shortcode: str) -> dict:
+    import asyncio
     url = f"https://www.instagram.com/graphql/query/?query_hash=b3055c01b4b222b8a47dc12b090e4e64&variables=%7B%22shortcode%22%3A%22{shortcode}%22%7D"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "X-IG-App-ID": "936619743392459",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
     }
     proxy = db.get_random_proxy()
     try:
-        async with httpx.AsyncClient(timeout=15, headers=headers, proxy=proxy) as client:
+        async with httpx.AsyncClient(timeout=20, headers=headers, proxy=proxy, follow_redirects=True) as client:
+            await client.get(f"https://www.instagram.com/p/{shortcode}/")
+            await asyncio.sleep(2)
+            
             resp = await client.get(url)
             if resp.status_code == 429:
                 raise ValueError("IG Public Web bị chặn (429).")

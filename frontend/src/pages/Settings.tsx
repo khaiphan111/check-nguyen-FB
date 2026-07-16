@@ -304,6 +304,27 @@ export default function Settings({ onSaved }: { onSaved: () => void }) {
               <option value="rapidapi">RapidAPI (Cần cấu hình API Key)</option>
             </select>
           </div>
+          {s.ig_method === "instaloader" && (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <Label>Tài khoản Instagram (Clone)</Label>
+                <Input
+                  value={s.ig_username || ""}
+                  onChange={(e) => up("ig_username", e.target.value)}
+                  placeholder="Nhập username IG để tự động đăng nhập"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label>Mật khẩu Instagram</Label>
+                <Input
+                  value={s.ig_password || ""}
+                  onChange={(e) => up("ig_password", e.target.value)}
+                  type="password"
+                  placeholder="Nhập password IG"
+                />
+              </div>
+            </>
+          )}
           <div className="flex flex-col gap-1.5">
             <Label>RapidAPI Key (Instagram)</Label>
             <Input

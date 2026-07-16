@@ -239,9 +239,50 @@ async def on_start(msg: Message):
     user = db.get_user(u.id)
     if not user:
         user = db.upsert_user(u.id, u.username or "", u.full_name or "", ref_id)
+        
+        # New User Notification for Admin
+        admin_msg = (
+            "🎉 <b>CÓ NGƯỜI DÙNG MỚI!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>Tên:</b> {u.full_name}\n"
+            f"🔗 <b>Username:</b> @{u.username if u.username else 'Không có'}\n"
+            f"🆔 <b>ID:</b> <code>{u.id}</code>\n"
+            f"🕒 <b>Thời gian:</b> {time.strftime('%H:%M:%S %d/%m/%Y')}\n"
+        )
         if ref_id > 0 and ref_id != u.id:
+            admin_msg += f"🤝 <b>Mời bởi:</b> <code>{ref_id}</code>\n"
             try:
                 await msg.bot.send_message(ref_id, f"🎉 <b>Tin vui!</b>\nNgười dùng <b>{u.full_name}</b> vừa tham gia Bot qua link giới thiệu của bạn!\nKhi họ nạp tiền bạn sẽ nhận được 10% hoa hồng.", parse_mode="HTML")
+            except: pass
+            
+        # Send to admin tg
+        admins = []
+        try:
+            if db.get_setting("admin_tg_id"): admins.append(int(db.get_setting("admin_tg_id")))
+        except: pass
+        try:
+            if db.get_setting("admin_tg_group_id"): admins.append(int(db.get_setting("admin_tg_group_id")))
+        except: pass
+        
+        admin_tg_token = db.get_setting("admin_bot_token", "")
+        if admin_tg_token:
+            from .admin_bot import manager as admin_manager
+            admin_sender_bot = admin_manager.bot
+        else:
+            admin_sender_bot = msg.bot
+            
+        if admin_sender_bot:
+            for admin_id in admins:
+                try:
+                    await admin_sender_bot.send_message(admin_id, admin_msg, parse_mode="HTML")
+                except: pass
+                
+        # Send to admin zalo
+        admin_zalo = db.get_setting("admin_zalo_id", "")
+        if admin_zalo:
+            try:
+                if zalo_manager.running:
+                    asyncio.create_task(zalo_manager.send_message(admin_zalo, admin_msg))
             except: pass
     else:
         user = db.upsert_user(u.id, u.username or "", u.full_name or "", 0)

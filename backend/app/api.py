@@ -39,6 +39,8 @@ class SettingsIn(BaseModel):
     ig_method: str | None = None
     ig_rapidapi_key: str | None = None
     ig_session_cookie: str | None = None
+    ig_username: str | None = None
+    ig_password: str | None = None
     enable_free_trial: str | None = None
     free_trial_days: str | None = None
     bank_name: str | None = None
