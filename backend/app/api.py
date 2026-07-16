@@ -18,11 +18,7 @@ _tokens = set()
 DAY = 86400
 
 
-def auth(authorization: str = Header(default="")):
-    token = authorization.replace("Bearer ", "").strip()
-    if token not in _tokens:
-        raise HTTPException(status_code=401, detail="Chưa đăng nhập")
-    return True
+# Old auth removed, now below _user_tokens
 
 
 class LoginIn(BaseModel):
@@ -89,11 +85,17 @@ def _row(r):
     return dict(r) if r else None
 
 
+def get_admin_token():
+    admin_pw = db.get_setting("admin_password", "admin")
+    import hashlib
+    hash_pw = hashlib.sha256((admin_pw or "admin").encode()).hexdigest()
+    return "admin-" + hash_pw
+
 @router.post("/login")
 def login(body: LoginIn):
     if body.password != db.get_setting("admin_password", "admin"):
         raise HTTPException(status_code=401, detail="Sai mật khẩu")
-    tok = secrets.token_hex(24)
+    tok = get_admin_token()
     _tokens.add(tok)
     return {"ok": True, "token": tok}
 
@@ -104,6 +106,12 @@ def user_auth(authorization: str = Header(default="")):
     if token not in _user_tokens:
         raise HTTPException(status_code=401, detail="User unauthorized")
     return _user_tokens[token]
+
+def auth(authorization: str = Header(default="")):
+    token = authorization.replace("Bearer ", "").strip()
+    if token != get_admin_token() and token not in _tokens:
+        raise HTTPException(status_code=401, detail="Chưa đăng nhập")
+    return True
 
 @router.post("/user/login")
 def user_login(body: TokenIn):

@@ -427,7 +427,24 @@ async def on_use_code(cb: CallbackQuery):
     if success:
         db.adjust_balance(cb.from_user.id, amount, f"Sử dụng Giftcode: {code}")
         try:
-            await cb.message.edit_text(f"✅ <b>NẠP TIỀN THÀNH CÔNG!</b>\n\nBạn đã sử dụng mã <code>{code}</code> và được cộng <b>{vnd(amount)}</b> vào tài khoản.\nCảm ơn bạn đã tin tưởng dịch vụ!")
+            msg_text_resp = (
+                f"✅ <b>NẠP TIỀN THÀNH CÔNG!</b>\n\n"
+                f"Bạn đã sử dụng mã <code>{code}</code> và được cộng <b>{vnd(amount)}</b> vào tài khoản.\n"
+                f"Cảm ơn bạn đã tin tưởng dịch vụ!"
+            )
+            upgraded, new_vip, is_lifetime = db.check_vip_upgrade(cb.from_user.id)
+            if upgraded and new_vip > 0:
+                limit = db.get_setting(f"vip{new_vip}_limit", "10")
+                msg_text_resp += (
+                    f"\n\n🎉 <b>CHÚC MỪNG BẠN ĐÃ LÊN VIP {new_vip}!</b> 🎉\n\n"
+                    f"🎁 <b>Đặc quyền mới:</b>\n"
+                    f"- Mức độ theo dõi tối đa: <b>{limit} mục</b>/nền tảng\n"
+                )
+                if is_lifetime:
+                    msg_text_resp += "- Hạn sử dụng: <b>VĨNH VIỄN</b>\n\n"
+                else:
+                    msg_text_resp += "\n"
+            await cb.message.edit_text(msg_text_resp, parse_mode="HTML")
         except: pass
         
         admin_zalo = db.get_setting("admin_zalo_id", "")
@@ -578,11 +595,29 @@ async def on_main_admin_confirm(cb: CallbackQuery):
         
         # Notify user via main bot
         try:
-            await cb.bot.send_message(
-                user_id,
+            msg_text = (
                 f"✅ <b>NẠP TIỀN THÀNH CÔNG</b>\n\n"
                 f"Bạn vừa được cộng <b>{amount:,.0f} VNĐ</b> vào tài khoản.\n"
-                f"Cảm ơn bạn đã sử dụng dịch vụ!",
+                f"Cảm ơn bạn đã sử dụng dịch vụ!"
+            )
+            
+            # Kiem tra VIP upgrade
+            upgraded, new_vip, is_lifetime = db.check_vip_upgrade(user_id)
+            if upgraded and new_vip > 0:
+                limit = db.get_setting(f"vip{new_vip}_limit", "10")
+                msg_text += (
+                    f"\n\n🎉 <b>CHÚC MỪNG BẠN ĐÃ LÊN VIP {new_vip}!</b> 🎉\n\n"
+                    f"🎁 <b>Đặc quyền mới:</b>\n"
+                    f"- Mức độ theo dõi tối đa: <b>{limit} mục</b>/nền tảng\n"
+                )
+                if is_lifetime:
+                    msg_text += "- Hạn sử dụng: <b>VĨNH VIỄN</b>\n\n"
+                else:
+                    msg_text += "\n"
+                    
+            await cb.bot.send_message(
+                user_id,
+                msg_text,
                 parse_mode="HTML"
             )
         except: pass
@@ -1654,7 +1689,20 @@ class ZaloBotManager:
         
         try:
             from .bot import manager
-            await manager.bot.send_message(tg_id, f"🎉 <b>NẠP TIỀN THÀNH CÔNG!</b>\n\nAdmin vừa cộng cho bạn: <b>{vnd(amount)}</b>\n👉 Gõ /balance để kiểm tra số dư nhé.")
+            msg_text_resp = f"🎉 <b>NẠP TIỀN THÀNH CÔNG!</b>\n\nAdmin vừa cộng cho bạn: <b>{vnd(amount)}</b>\n👉 Gõ /balance để kiểm tra số dư nhé."
+            upgraded, new_vip, is_lifetime = db.check_vip_upgrade(tg_id)
+            if upgraded and new_vip > 0:
+                limit = db.get_setting(f"vip{new_vip}_limit", "10")
+                msg_text_resp += (
+                    f"\n\n🎉 <b>CHÚC MỪNG BẠN ĐÃ LÊN VIP {new_vip}!</b> 🎉\n\n"
+                    f"🎁 <b>Đặc quyền mới:</b>\n"
+                    f"- Mức độ theo dõi tối đa: <b>{limit} mục</b>/nền tảng\n"
+                )
+                if is_lifetime:
+                    msg_text_resp += "- Hạn sử dụng: <b>VĨNH VIỄN</b>\n\n"
+                else:
+                    msg_text_resp += "\n"
+            await manager.bot.send_message(tg_id, msg_text_resp, parse_mode="HTML")
         except:
             pass
 
