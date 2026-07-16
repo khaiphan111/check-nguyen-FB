@@ -670,11 +670,10 @@ async def on_hdcookie(msg: Message):
         "• Đăng nhập tài khoản Clone FB trên trình duyệt.\n"
         "• F12 -> tab <b>Network</b> -> F5. Bấm vào request đầu tiên, kéo xuống <b>Request Headers</b> -> copy toàn bộ dòng <code>Cookie: c_user=...</code>\n"
         "• Hoặc dùng tiện ích mở rộng (Extension) như <b>J2TEAM Security</b> hoặc <b>Get Token by Ninja</b> để copy nhanh.\n\n"
-        "<b>3. INSTAGRAM (Session Cookie)</b>\n"
-        "• Đăng nhập IG trên Web.\n"
-        "• F12 -> <b>Application</b> -> Cookies -> <code>https://www.instagram.com</code>\n"
-        "• Tìm khóa có tên là <code>sessionid</code> và copy giá trị của nó.\n\n"
-        "⚠️ <i>Lưu ý: Tuyệt đối KHÔNG chia sẻ Cookie/SessionID của tài khoản CHÍNH cho bất kỳ ai để tránh mất tài khoản. Chỉ nên dùng acc Clone/Phụ để lấy Cookie nạp vào Tool!</i>"
+        "<b>3. INSTAGRAM</b>\n"
+        "• <b>Cách 1 (Dễ nhất - Khuyên dùng):</b> Bạn chỉ cần vào trang <b>Cài đặt</b> trên Web Dashboard, chọn mục Phương thức check Instagram là <code>Instaloader</code>, sau đó điền trực tiếp <b>Tên đăng nhập (Username)</b> và <b>Mật khẩu</b> của acc Clone IG vào. Tool sẽ tự động đăng nhập ngầm và lấy Cookie cho bạn!\n"
+        "• <b>Cách 2 (Thủ công):</b> Đăng nhập IG trên Web -> F12 -> <b>Application</b> -> Cookies -> tìm khóa <code>sessionid</code> và copy dán vào mục IG Session Cookie.\n\n"
+        "⚠️ <i>Lưu ý: Tuyệt đối KHÔNG sử dụng tài khoản CHÍNH cho việc này để tránh rủi ro bị khóa. Chỉ nên dùng acc Clone/Phụ để nạp vào Tool!</i>"
     )
     await msg.answer(text, parse_mode="HTML")
 
