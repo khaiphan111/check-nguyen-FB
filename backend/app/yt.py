@@ -1,13 +1,22 @@
-import httpx
 import re
 import json
 import random
+import os
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from . import db
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15",
-]
+def get_yt_api():
+    # Read API key from file if exists, else from db
+    try:
+        with open("d:\\cac tool\\FB-Live-Die-Checker\\api ytb.txt", "r") as f:
+            api_key = f.read().strip()
+    except Exception:
+        api_key = db.get_setting("yt_api_key", "")
+    
+    if not api_key:
+        raise Exception("Chưa cấu hình YouTube API Key")
+    return build('youtube', 'v3', developerKey=api_key)
 
 def parse_yt_username(link: str) -> str:
     link = (link or "").strip()
@@ -22,14 +31,10 @@ def parse_yt_username(link: str) -> str:
         return link.split("youtube.com/user/")[1].split("/")[0]
     return link.split("/")[-1]
 
+import asyncio
+
 async def fetch_yt_info(username: str) -> dict:
-    url = f"https://www.youtube.com/@{username}" if not username.startswith("UC") else f"https://www.youtube.com/channel/{username}"
-    headers = {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-    
-    proxy = db.get_random_proxy()
+    youtube = get_yt_api()
     result = {
         "username": username,
         "subscribers": 0,
@@ -38,44 +43,40 @@ async def fetch_yt_info(username: str) -> dict:
     }
     
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, proxy=proxy) as client:
-            r = await client.get(url, headers=headers)
-            html = r.text
+        if username.startswith("UC"):
+            request = youtube.channels().list(part='snippet,statistics', id=username)
+        else:
+            request = youtube.channels().list(part='snippet,statistics', forHandle=username)
             
-            # Find ytInitialData
-            match = re.search(r'var ytInitialData = (\{.*?\});</script>', html)
-            if match:
-                data = json.loads(match.group(1))
-                try:
-                    header = data["header"]["c4TabbedHeaderRenderer"]
-                    result["username"] = header.get("title", username)
-                    
-                    subs_str = header.get("subscriberCountText", {}).get("simpleText", "0")
-                    # "1.5M subscribers" -> parse
-                    subs_str = subs_str.split(" ")[0]
-                    result["subscribers"] = _parse_num(subs_str)
-                    
-                    vids_str = header.get("videosCountText", {}).get("runs", [{}])[0].get("text", "0")
-                    result["videos"] = _parse_num(vids_str)
-                    
-                    try:
-                        result["avatar"] = header["avatar"]["thumbnails"][-1]["url"]
-                    except: pass
-                except Exception as e:
-                    pass
+        response = await asyncio.to_thread(request.execute)
+        
+        if not response.get('items'):
+            # Fallback if forHandle doesn't work, search by query
+            search_request = youtube.search().list(part='snippet', q=username, type='channel', maxResults=1)
+            search_response = await asyncio.to_thread(search_request.execute)
+            if search_response.get('items'):
+                channel_id = search_response['items'][0]['id']['channelId']
+                request = youtube.channels().list(part='snippet,statistics', id=channel_id)
+                response = await asyncio.to_thread(request.execute)
+                
+        if response.get('items'):
+            item = response['items'][0]
+            snippet = item['snippet']
+            stats = item['statistics']
+            
+            result["username"] = snippet.get("title", username)
+            result["subscribers"] = int(stats.get("subscriberCount", 0))
+            result["videos"] = int(stats.get("videoCount", 0))
+            result["avatar"] = snippet.get("thumbnails", {}).get("high", {}).get("url", "")
+        else:
+            raise Exception("Không tìm thấy kênh")
+            
+    except HttpError as e:
+        raise Exception(f"Lỗi YouTube API: {e.reason}")
     except Exception as e:
-        if proxy: db.mark_proxy_failed(proxy)
-        raise Exception("Không thể kết nối đến YouTube hoặc IP bị chặn")
+        raise Exception(f"Không thể lấy thông tin kênh: {str(e)}")
         
     return result
-
-def _parse_num(s: str) -> int:
-    s = s.upper().replace(',', '').replace('.', '')
-    if 'K' in s: return int(float(s.replace('K', '')) * 1000)
-    if 'M' in s: return int(float(s.replace('M', '')) * 1000000)
-    if 'B' in s: return int(float(s.replace('B', '')) * 1000000000)
-    try: return int(re.sub(r'[^0-9]', '', s))
-    except: return 0
 
 def parse_yt_video_id(link: str) -> str:
     link = (link or "").strip()
@@ -89,13 +90,7 @@ async def fetch_yt_video_info(url: str) -> dict:
     if not video_id:
         raise Exception("Không tìm thấy Video ID")
         
-    fetch_url = f"https://www.youtube.com/watch?v={video_id}"
-    headers = {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-    
-    proxy = db.get_random_proxy()
+    youtube = get_yt_api()
     result = {
         "id": video_id,
         "views": 0,
@@ -107,47 +102,26 @@ async def fetch_yt_video_info(url: str) -> dict:
     }
     
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, proxy=proxy) as client:
-            r = await client.get(fetch_url, headers=headers)
-            html = r.text
+        request = youtube.videos().list(part='snippet,statistics', id=video_id)
+        response = await asyncio.to_thread(request.execute)
+        
+        if response.get('items'):
+            item = response['items'][0]
+            snippet = item['snippet']
+            stats = item['statistics']
             
-            match = re.search(r'var ytInitialData = (\{.*?\});</script>', html)
-            if match:
-                data = json.loads(match.group(1))
-                try:
-                    contents = data["contents"]["twoColumnWatchNextResults"]["results"]["results"]["contents"]
-                    video_primary = contents[0]["videoPrimaryInfoRenderer"]
-                    video_secondary = contents[1]["videoSecondaryInfoRenderer"]
-                    
-                    result["desc"] = video_primary.get("title", {}).get("runs", [{}])[0].get("text", result["desc"])
-                    
-                    try:
-                        views_str = video_primary["viewCount"]["videoViewCountRenderer"]["viewCount"]["simpleText"]
-                        result["views"] = _parse_num(views_str)
-                    except: pass
-                    
-                    try:
-                        likes_str = video_primary["videoActions"]["menuRenderer"]["topLevelButtons"][0]["segmentedLikeDislikeButtonViewModel"]["likeButtonViewModel"]["likeButtonViewModel"]["toggleButtonViewModel"]["toggleButtonViewModel"]["defaultButtonViewModel"]["buttonViewModel"]["title"]
-                        result["likes"] = _parse_num(likes_str)
-                    except: pass
-                    
-                    try:
-                        result["username"] = video_secondary["owner"]["videoOwnerRenderer"]["title"]["runs"][0]["text"]
-                    except: pass
-                    
-                except Exception as e:
-                    pass
-            else:
-                # Fallback to regex
-                views_match = re.search(r'"viewCount":"(\d+)"', html)
-                if views_match: result["views"] = int(views_match.group(1))
-                
-                title_match = re.search(r'<title>(.*?)</title>', html)
-                if title_match: result["desc"] = title_match.group(1).replace(" - YouTube", "")
-                
+            result["desc"] = snippet.get("title", result["desc"])
+            result["username"] = snippet.get("channelTitle", "")
+            result["views"] = int(stats.get("viewCount", 0))
+            result["likes"] = int(stats.get("likeCount", 0))
+            result["comments"] = int(stats.get("commentCount", 0))
+        else:
+            raise Exception("Không tìm thấy video")
+            
+    except HttpError as e:
+        raise Exception(f"Lỗi YouTube API: {e.reason}")
     except Exception as e:
-        if proxy: db.mark_proxy_failed(proxy)
-        raise Exception("Không thể lấy dữ liệu video YouTube")
+        raise Exception(f"Không thể lấy dữ liệu video YouTube: {str(e)}")
         
     return result
 

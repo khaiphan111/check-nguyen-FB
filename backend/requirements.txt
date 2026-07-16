@@ -7,3 +7,4 @@ instaloader
 psycopg2-binary
 python-dotenv
 python-multipart
+google-api-python-client
