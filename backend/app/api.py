@@ -63,6 +63,7 @@ class SettingsIn(BaseModel):
     vip1_daily_check: str | None = None
     vip2_daily_check: str | None = None
     vip3_daily_check: str | None = None
+    yt_api_key: str | None = None
 
 
 class TokenIn(BaseModel):
