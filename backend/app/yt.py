@@ -2,17 +2,12 @@ import re
 import json
 import random
 import os
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+
 from . import db
 
 def get_yt_api():
-    # Read API key from file if exists, else from db
-    try:
-        with open("d:\\cac tool\\FB-Live-Die-Checker\\api ytb.txt", "r", encoding="utf-8-sig") as f:
-            api_key = f.read().strip()
-    except Exception:
-        api_key = db.get_setting("yt_api_key", "")
+    from googleapiclient.discovery import build
+    api_key = db.get_setting("yt_api_key", "")
     
     if not api_key:
         raise Exception("Chưa cấu hình YouTube API Key")
@@ -43,6 +38,7 @@ async def fetch_yt_info(username: str) -> dict:
     }
     
     try:
+        from googleapiclient.errors import HttpError
         if username.startswith("UC"):
             request = youtube.channels().list(part='snippet,statistics', id=username)
         else:
@@ -102,6 +98,7 @@ async def fetch_yt_video_info(url: str) -> dict:
     }
     
     try:
+        from googleapiclient.errors import HttpError
         request = youtube.videos().list(part='snippet,statistics', id=video_id)
         response = await asyncio.to_thread(request.execute)
         
