@@ -1718,7 +1718,7 @@ zalo_manager = ZaloBotManager()
 
 
 # --- YOUTUBE COMMANDS ---
-from app.yt import parse_yt_username, fetch_yt_info, build_yt_caption, parse_yt_video_id, fetch_yt_video_info, build_yt_video_caption
+from .yt import parse_yt_username, fetch_yt_info, build_yt_caption, parse_yt_video_id, fetch_yt_video_info, build_yt_video_caption
 
 @router.message(Command("yt"))
 async def on_yt(msg: Message, command: CommandObject):
@@ -1805,7 +1805,7 @@ async def on_trackvyt(msg: Message, command: CommandObject):
         await wait.edit_text(f"❌ Lỗi: {str(e)}")
 
 # --- ZALO TRACKING COMMANDS ---
-from app.zalo_checker import check_zalo_phone
+from .zalo_checker import check_zalo_phone
 
 @router.message(Command("zalo"))
 async def on_zalo(msg: Message, command: CommandObject):

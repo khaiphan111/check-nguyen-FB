@@ -570,7 +570,7 @@ poller = FollowerPoller()
 
 # --- YOUTUBE POLLER ---
 async def _poll_yt():
-    from app.yt import fetch_yt_info, fetch_yt_video_info
+    from .yt import fetch_yt_info, fetch_yt_video_info
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     while True:
         try:
@@ -641,7 +641,7 @@ async def _poll_yt():
 
 # --- ZALO POLLER ---
 async def _poll_zalo():
-    from app.zalo_checker import check_zalo_phone
+    from .zalo_checker import check_zalo_phone
     while True:
         try:
             tracks = db.all_active_zalo_tracks()

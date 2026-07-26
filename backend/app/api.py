@@ -851,7 +851,7 @@ async def api_add_zalo_track(body: dict, user=Depends(auth)):
     
     cookie = db.get_setting("zalo_cookie", "")
     imei = db.get_setting("zalo_imei", "")
-    from app.zalo_checker import check_zalo_phone
+    from .zalo_checker import check_zalo_phone
     res = await check_zalo_phone(phone, cookie, imei)
     
     if res.get("live"):
