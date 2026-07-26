@@ -116,18 +116,24 @@ async def vercel_cron():
         return {"ok": False, "error": str(e)}
 
 
-if os.path.isdir(config.STATIC_DIR):
-    app.mount("/assets", StaticFiles(directory=os.path.join(config.STATIC_DIR, "assets")), name="assets")
-    images_dir = os.path.join(os.path.dirname(__file__), "..", "data", "images")
-    if not os.path.isdir(images_dir):
-        os.makedirs(images_dir, exist_ok=True)
-    app.mount("/images", StaticFiles(directory=images_dir), name="images")
+try:
+    if os.path.isdir(config.STATIC_DIR):
+        app.mount("/assets", StaticFiles(directory=os.path.join(config.STATIC_DIR, "assets")), name="assets")
+        images_dir = os.path.join(os.path.dirname(__file__), "..", "data", "images")
+        if not is_vercel:
+            if not os.path.isdir(images_dir):
+                os.makedirs(images_dir, exist_ok=True)
+        if os.path.isdir(images_dir):
+            app.mount("/images", StaticFiles(directory=images_dir), name="images")
 
-    @app.get("/{full_path:path}")
-    def spa(full_path: str):
-        if full_path.startswith("api/"):
-            return JSONResponse({"detail": "Not found"}, status_code=404)
-        index = os.path.join(config.STATIC_DIR, "index.html")
-        if os.path.isfile(index):
-            return FileResponse(index)
-        return JSONResponse({"detail": "Frontend chưa build"}, status_code=404)
+        @app.get("/{full_path:path}")
+        def spa(full_path: str):
+            if full_path.startswith("api/"):
+                return JSONResponse({"detail": "Not found"}, status_code=404)
+            index = os.path.join(config.STATIC_DIR, "index.html")
+            if os.path.isfile(index):
+                return FileResponse(index)
+            return JSONResponse({"detail": "Frontend chưa build"}, status_code=404)
+except Exception as e:
+    import logging
+    logging.warning(f"Static files mount skipped: {e}")
