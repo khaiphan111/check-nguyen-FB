@@ -1,0 +1,5 @@
+def _sub_text(user) -> str:
+    if _sub_active(user):
+        days_left = (user["sub_until"] - now()) // DAY
+        return f"Còn hạn ({days_left} ngày)"
+    return "Chưa có / đã hết hạn"

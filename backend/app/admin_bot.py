@@ -246,7 +246,7 @@ class AdminBotManager:
         self.task = None
         self.running = False
 
-    async def start(self):
+    async def start(self, webhook_mode: bool = False):
         token = db.get_setting("admin_bot_token")
         if not token:
             log.info("Admin bot token not found. Admin bot disabled.")
@@ -254,12 +254,15 @@ class AdminBotManager:
             
         self.bot = Bot(token=token, default=DefaultBotProperties(parse_mode="HTML"))
         self.running = True
-        log.info("Admin Bot starting...")
         
         try:
-            # Drop pending updates
-            await self.bot.delete_webhook(drop_pending_updates=True)
-            self.task = asyncio.create_task(self.dp.start_polling(self.bot))
+            if webhook_mode:
+                log.info("Admin Bot starting (Webhook mode)...")
+            else:
+                log.info("Admin Bot starting...")
+                # Drop pending updates
+                await self.bot.delete_webhook(drop_pending_updates=True)
+                self.task = asyncio.create_task(self.dp.start_polling(self.bot))
         except Exception as e:
             log.error("Failed to start admin bot: %s", e)
             self.running = False

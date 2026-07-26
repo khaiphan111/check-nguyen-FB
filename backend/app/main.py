@@ -1,10 +1,11 @@
 # FB Live/Die Checker & Tiktok Checker
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from aiogram.types import Update
 
 from . import config, db
 from .api import router as api_router
@@ -13,6 +14,7 @@ from .admin_bot import manager as admin_manager
 from .poller import poller
 
 app = FastAPI(title=config.APP_NAME)
+is_vercel = os.environ.get("VERCEL") == "1"
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,7 +43,7 @@ async def on_startup():
         print(f"DEBUG: bot_token={bool(token)}, zalo_token={bool(zalo_token)}", flush=True)
         if token and db.get_setting("setup_done") == "1":
             print("DEBUG: Start manager.start(token)", flush=True)
-            if await manager.start(token):
+            if await manager.start(token, webhook_mode=is_vercel):
                 started_any = True
                 
         if zalo_token:
@@ -50,15 +52,18 @@ async def on_startup():
                 started_any = True
                 
         print("DEBUG: Start admin_manager.start()", flush=True)
-        await admin_manager.start()
+        await admin_manager.start(webhook_mode=is_vercel)
                 
-        if started_any:
+        if started_any and not is_vercel:
             print("DEBUG: Start poller.start()", flush=True)
             poller.start()
         print("DEBUG: Finish start_services", flush=True)
 
-    # Khởi chạy dưới nền để Uvicorn có thể mở port ngay lập tức
-    asyncio.create_task(start_services())
+    if is_vercel:
+        await start_services()
+    else:
+        # Khởi chạy dưới nền để Uvicorn có thể mở port ngay lập tức
+        asyncio.create_task(start_services())
     print("DEBUG: Finish on_startup", flush=True)
 
 
@@ -72,7 +77,43 @@ async def on_shutdown():
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "app": config.APP_NAME, "version": config.APP_VERSION}
+    return {"ok": True, "app": config.APP_NAME, "version": config.APP_VERSION, "vercel": is_vercel}
+
+@app.post("/api/webhook/telegram")
+async def telegram_webhook(request: Request):
+    if not manager.bot or not manager.dp:
+        return {"ok": False, "detail": "Bot not initialized"}
+    try:
+        update_data = await request.json()
+        update = Update(**update_data)
+        await manager.dp.feed_update(bot=manager.bot, update=update)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+@app.post("/api/webhook/telegram_admin")
+async def telegram_admin_webhook(request: Request):
+    if not admin_manager.bot or not admin_manager.dp:
+        return {"ok": False, "detail": "Admin bot not initialized"}
+    try:
+        update_data = await request.json()
+        update = Update(**update_data)
+        await admin_manager.dp.feed_update(bot=admin_manager.bot, update=update)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+@app.get("/api/cron")
+@app.post("/api/cron")
+async def vercel_cron():
+    if not is_vercel:
+        return {"ok": False, "detail": "Only applicable on Vercel"}
+    try:
+        from .poller import do_check_tracks
+        do_check_tracks()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 if os.path.isdir(config.STATIC_DIR):

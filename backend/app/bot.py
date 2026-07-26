@@ -1370,7 +1370,7 @@ class BotManager:
     def running(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    async def start(self, token: str) -> bool:
+    async def start(self, token: str, webhook_mode: bool = False) -> bool:
         await self.stop()
         if not token:
             return False
@@ -1381,20 +1381,27 @@ class BotManager:
             log.error("Loi get_me: %s", e)
             self.bot = None
             return False
-        try:
-            await self.bot.delete_webhook(drop_pending_updates=True)
-        except Exception:
-            pass
+            
         self.dp = Dispatcher()
         self.dp.include_router(router)
         await self.bot.set_my_commands(COMMANDS)
         poller.set_bot(self.bot)
-        self._task = asyncio.create_task(
-            self.dp.start_polling(self.bot, handle_signals=False)
-        )
-        db.add_log("system", f"Bot khởi động: @{me.username}")
-        log.info("Bot @%s đang chạy.", me.username)
-        return True
+        
+        if webhook_mode:
+            db.add_log("system", f"Bot khởi động (Webhook): @{me.username}")
+            log.info("Bot @%s đang chạy (Webhook mode).", me.username)
+            return True
+        else:
+            try:
+                await self.bot.delete_webhook(drop_pending_updates=True)
+            except Exception:
+                pass
+            self._task = asyncio.create_task(
+                self.dp.start_polling(self.bot, handle_signals=False)
+            )
+            db.add_log("system", f"Bot khởi động: @{me.username}")
+            log.info("Bot @%s đang chạy.", me.username)
+            return True
 
     async def stop(self):
         if self.dp:
