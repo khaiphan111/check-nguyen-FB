@@ -1,6 +1,10 @@
 import sys
 import os
 import traceback
+from fastapi import FastAPI
+
+# Dummy instance for Vercel AST parser to detect this file as a FastAPI entrypoint
+_dummy_app = FastAPI()
 
 # Đảm bảo có thể import từ backend
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
